@@ -376,7 +376,7 @@ class _PlayScreenState extends State<PlayScreen> {
       if (_myPlayer!.role.team == RoleTeam.werewolf) {
         _chatMessages.add(ChatMessage(
           senderName: 'Hệ thống',
-          content: 'Kênh chat Bầy Sói đã mở. Trò chuyện bí mật vào Ban Đêm!',
+          content: 'Kênh chat Bầy Sói đã mở.Trò chuyện bí mật vào Ban Đêm!',
           isSystem: true,
           isWerewolfOnly: true,
           time: DateTime.now(),
