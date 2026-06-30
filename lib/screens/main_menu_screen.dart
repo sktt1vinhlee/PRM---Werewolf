@@ -1,28 +1,47 @@
 import 'package:flutter/material.dart';
+import 'play_screen.dart';
 
 class MainMenuScreen extends StatelessWidget {
   const MainMenuScreen({super.key});
 
-  static const _backgroundColor = Color(0xFF81D4FA);
   static const _buttonWidth = 280.0;
-  static const _buttonHeight = 52.0;
-  static const _buttonRadius = 12.0;
+  static const _buttonHeight = 56.0;
+  static const _buttonRadius = 16.0;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _backgroundColor,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            Expanded(
-              child: Center(
-                child: _buildMenuButtons(),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF4FC3F7),
+              Color(0xFF0288D1),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildTopBar(),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 40),
+                      _buildLogo(),
+                      const SizedBox(height: 60),
+                      _buildMenuButtons(context),
+                      const SizedBox(height: 40),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            _buildBottomActions(),
-          ],
+              _buildBottomActions(),
+            ],
+          ),
         ),
       ),
     );
@@ -30,46 +49,55 @@ class MainMenuScreen extends StatelessWidget {
 
   Widget _buildTopBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFFD54F),
-                  shape: BoxShape.circle,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFD54F),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black12,
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.pets,
+                    size: 14,
+                    color: Color(0xFF8D6E00),
+                  ),
                 ),
-                child: const Icon(
-                  Icons.pets,
-                  size: 16,
-                  color: Color(0xFF8D6E00),
+                const SizedBox(width: 8),
+                const Text(
+                  'Vàng miễn phí!',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Vàng miễn phí!',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
           Row(
             children: [
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.settings, color: Colors.white, size: 28),
-              ),
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.people, color: Colors.white, size: 28),
-              ),
+              _topIconButton(Icons.settings),
+              const SizedBox(width: 12),
+              _topIconButton(Icons.people),
             ],
           ),
         ],
@@ -77,50 +105,132 @@ class MainMenuScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuButtons() {
+  Widget _topIconButton(IconData icon) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        onPressed: () {},
+        icon: Icon(icon, color: Colors.white, size: 24),
+        constraints: const BoxConstraints(),
+        padding: const EdgeInsets.all(8),
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
     return Column(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        _filledButton('CHƠI', onPressed: () {}),
-        const SizedBox(height: 12),
-        _outlinedButton('TÚI ĐỒ', onPressed: () {}),
-        const SizedBox(height: 12),
-        _outlinedButton('RƯƠNG QUÀ', onPressed: () {}),
-        const SizedBox(height: 12),
-        _outlinedButton('HỒ SƠ SỰ NGHIỆP', onPressed: () {}),
-        const SizedBox(height: 20),
-        const Text(
-          'VAI TRÒ',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.2,
+        Container(
+          width: 120,
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.1),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 20,
+                spreadRadius: 5,
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.pets,
+              size: 80,
+              color: Colors.white,
+            ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 16),
         const Text(
-          'CHÀO MỪNG ĐẾN BETA',
+          'MA SÓI',
           style: TextStyle(
             color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
+            fontSize: 40,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 4.0,
+            shadows: [
+              Shadow(
+                blurRadius: 10.0,
+                color: Colors.black26,
+                offset: Offset(0, 4),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _filledButton(String label, {required VoidCallback onPressed}) {
-    return SizedBox(
+  Widget _buildMenuButtons(BuildContext context) {
+    return Column(
+      children: [
+        _primaryButton('CHƠI', onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const PlayScreen()),
+          );
+        }),
+        const SizedBox(height: 16),
+        _secondaryButton('TÚI ĐỒ', icon: Icons.inventory_2_outlined),
+        const SizedBox(height: 12),
+        _secondaryButton('RƯƠNG QUÀ', icon: Icons.card_giftcard),
+        const SizedBox(height: 12),
+        _secondaryButton('HỒ SƠ SỰ NGHIỆP', icon: Icons.bar_chart),
+        const SizedBox(height: 32),
+        const Text(
+          'VAI TRÒ',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 2.0,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Text(
+            'CHÀO MỪNG ĐẾN BETA',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.0,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _primaryButton(String label, {required VoidCallback onPressed}) {
+    return Container(
       width: _buttonWidth,
-      height: _buttonHeight,
+      height: _buttonHeight + 4,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(_buttonRadius),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
+          foregroundColor: const Color(0xFF0288D1),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(_buttonRadius),
@@ -129,35 +239,45 @@ class MainMenuScreen extends StatelessWidget {
         child: Text(
           label,
           style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 2.0,
           ),
         ),
       ),
     );
   }
 
-  Widget _outlinedButton(String label, {required VoidCallback onPressed}) {
+  Widget _secondaryButton(String label, {IconData? icon}) {
     return SizedBox(
       width: _buttonWidth,
       height: _buttonHeight,
       child: OutlinedButton(
-        onPressed: onPressed,
+        onPressed: () {},
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.white,
-          side: const BorderSide(color: Colors.white, width: 3),
+          side: const BorderSide(color: Colors.white, width: 2),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(_buttonRadius),
           ),
+          backgroundColor: Colors.white.withOpacity(0.05),
         ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.2,
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 20),
+              const SizedBox(width: 10),
+            ],
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -165,35 +285,35 @@ class MainMenuScreen extends StatelessWidget {
 
   Widget _buildBottomActions() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      padding: const EdgeInsets.all(16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(
-              Icons.card_giftcard,
-              color: Color(0xFFFFD54F),
-              size: 32,
-            ),
-          ),
-          IconButton(
-            onPressed: () {},
-            icon: Container(
-              width: 32,
-              height: 32,
+          _bottomIconButton(Icons.card_giftcard, color: const Color(0xFFFFD54F)),
+          _bottomIconButton(Icons.help_outline, isCircle: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomIconButton(IconData icon, {Color color = Colors.white, bool isCircle = false}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        onPressed: () {},
+        icon: isCircle 
+          ? Container(
+              padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(color: color, width: 2),
               ),
-              child: const Icon(
-                Icons.question_mark,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-          ),
-        ],
+              child: Icon(icon, color: color, size: 16),
+            )
+          : Icon(icon, color: color, size: 28),
       ),
     );
   }
