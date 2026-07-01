@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
 class MainMenuScreen extends StatelessWidget {
   const MainMenuScreen({super.key});
@@ -16,11 +17,7 @@ class MainMenuScreen extends StatelessWidget {
         child: Column(
           children: [
             _buildTopBar(),
-            Expanded(
-              child: Center(
-                child: _buildMenuButtons(),
-              ),
-            ),
+            Expanded(child: Center(child: _buildMenuButtons())),
             _buildBottomActions(),
           ],
         ),
@@ -81,7 +78,12 @@ class MainMenuScreen extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _filledButton('CHƠI', onPressed: () {}),
+        _filledButton(
+          'CHƠI',
+          onPressed: () {
+            Get.toNamed('/login'); // Gọi Màn 1 của bạn
+          },
+        ),
         const SizedBox(height: 12),
         _outlinedButton('TÚI ĐỒ', onPressed: () {}),
         const SizedBox(height: 12),
