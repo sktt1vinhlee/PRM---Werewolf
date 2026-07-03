@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'package:get/get.dart';
 import 'package:flutter/material.dart';
-// TODO: Tương lai đổi ApiService thành SocketService để xử lý realtime
-import 'package:werewolf/core/network/api_service.dart'; 
+//import 'package:werewolf/core/network/api_service.dart'; 
 
 class AuthController extends GetxController {
-  final ApiService _apiService = ApiService();
+  //final ApiService _apiService = ApiService();
 
   var isLoading = false.obs;
   
@@ -20,42 +19,28 @@ class AuthController extends GetxController {
     try {
       isLoading.value = true;
 
-      // TODO: Sau này thay đoạn này bằng SocketIO để join room
-      // Ví dụ: _socketService.emit('join-room', {'name': nickname, 'room': roomCode});
-      
-      // Tạm thời vẫn dùng API HTTP cũ để giữ khung (Cần Hùng cung cấp API Check Room hợp lệ)
-      final responseData = await _apiService.joinRoom( 
+      // 1. Giả lập thời gian chờ mạng 1.5 giây để nhìn thấy vòng xoay Loading
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      // 2. TẠM THỜI ĐÓNG GỌI API THẬT ĐỂ TEST UI (cần máy chủ máy chủ Backend (Spring Boot/NodeJS))
+      /*
+      final responseData = await _apiService.joinRoom(
         nickname: nickname,
         roomCode: roomCode,
       );
+      */
 
-      // Giả định response trả về thành công nếu phòng tồn tại và chưa bắt đầu
-      if (responseData != null && responseData['status'] == 'success') {
-        print("🎉 VÀO LÀNG THÀNH CÔNG: Chào mừng $nickname đến phòng $roomCode!");
+      // 3. GIẢ LẬP ĐĂNG NHẬP THÀNH CÔNG LUÔN
+      print("🎉 [MOCK] VÀO LÀNG THÀNH CÔNG: Chào mừng $nickname đến phòng $roomCode!");
+      currentPlayerName.value = nickname;
+      currentRoomCode.value = roomCode;
 
-        // Ghi nhớ dữ liệu vào State để mang sang Màn 4 (Waiting Room)
-        currentPlayerName.value = nickname;
-        currentRoomCode.value = roomCode;
+      return true;
 
-        return true;
-      } else {
-        print("❌ VÀO LÀNG THẤT BẠI: Phòng không tồn tại hoặc đã đầy!");
-
-        Get.snackbar(
-          "Lỗi tham gia",
-          responseData?['message'] ?? "Không thể vào phòng. Có thể phòng đã đầy hoặc đang chơi!",
-          snackPosition: SnackPosition.TOP,
-          backgroundColor: Colors.orange,
-          colorText: Colors.white,
-        );
-
-        return false;
-      }
     } catch (e) {
-      print("Lỗi kết nối Server Game: $e");
       Get.snackbar(
         "Lỗi kết nối",
-        "Không thể kết nối đến máy chủ làng sói. Vui lòng kiểm tra lại mạng!",
+        "Có lỗi xảy ra: $e",
         backgroundColor: Colors.red,
         colorText: Colors.white,
       );

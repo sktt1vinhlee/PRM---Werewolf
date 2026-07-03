@@ -41,7 +41,7 @@ class WaitingRoomScreen extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.primary.withOpacity(0.5)),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
               ),
               child: Column(
                 children: [
