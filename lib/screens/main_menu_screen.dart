@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'play_screen.dart';
+import 'package:get/get.dart';
 
 class MainMenuScreen extends StatelessWidget {
   const MainMenuScreen({super.key});
@@ -11,6 +11,7 @@ class MainMenuScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // GIỮ LẠI NỀN GRADIENT CỦA VINH
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -56,7 +57,7 @@ class MainMenuScreen extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
@@ -108,7 +109,7 @@ class MainMenuScreen extends StatelessWidget {
   Widget _topIconButton(IconData icon) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
+        color: Colors.white.withValues(alpha: 0.2),
         shape: BoxShape.circle,
       ),
       child: IconButton(
@@ -127,11 +128,11 @@ class MainMenuScreen extends StatelessWidget {
           width: 120,
           height: 120,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
+            color: Colors.white.withValues(alpha: 0.1),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 20,
                 spreadRadius: 5,
               ),
@@ -169,11 +170,9 @@ class MainMenuScreen extends StatelessWidget {
   Widget _buildMenuButtons(BuildContext context) {
     return Column(
       children: [
+        // ĐIỂM QUAN TRỌNG: Nút bấm giữ nguyên UI của Vinh, nhưng chức năng là của Bạn!
         _primaryButton('CHƠI', onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const PlayScreen()),
-          );
+          Get.toNamed('/login'); // Gọi sang luồng của bạn
         }),
         const SizedBox(height: 16),
         _secondaryButton('TÚI ĐỒ', icon: Icons.inventory_2_outlined),
@@ -195,7 +194,7 @@ class MainMenuScreen extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.8),
+            color: Colors.orange.withValues(alpha: 0.8),
             borderRadius: BorderRadius.circular(4),
           ),
           child: const Text(
@@ -220,7 +219,7 @@ class MainMenuScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(_buttonRadius),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
+            color: Colors.black.withValues(alpha: 0.2),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -260,7 +259,7 @@ class MainMenuScreen extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(_buttonRadius),
           ),
-          backgroundColor: Colors.white.withOpacity(0.05),
+          backgroundColor: Colors.white.withValues(alpha: 0.05),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -299,7 +298,7 @@ class MainMenuScreen extends StatelessWidget {
   Widget _bottomIconButton(IconData icon, {Color color = Colors.white, bool isCircle = false}) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
+        color: Colors.white.withValues(alpha: 0.2),
         shape: BoxShape.circle,
       ),
       child: IconButton(
