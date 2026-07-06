@@ -23,7 +23,7 @@ class GameController extends ChangeNotifier {
   OnlinePlayer? selectedPlayer;
   List<String> actionLogs = [];
   List<ChatMessage> chatMessages = [];
-  
+
   // Timer state
   int phaseTimerSeconds = 0;
   Timer? _phaseTimer;
@@ -287,13 +287,13 @@ class GameController extends ChangeNotifier {
     addLog('Hệ thống: Hết thời gian thảo luận. Bắt đầu bỏ phiếu (15s)!');
     currentPhase = GamePhase.voting;
     selectedPlayer = null;
-    
+
     // Reset all votes before starting new voting session
     for (var p in players) {
       p.voteCount = 0;
       p.isTargeted = false;
     }
-    
+
     _simulateBotVotesGradually();
     startPhaseTimer(15);
     notifyListeners();
@@ -308,7 +308,7 @@ class GameController extends ChangeNotifier {
       // Bots will vote at random times during the 15s window
       Timer(Duration(milliseconds: 500 + random.nextInt(12000)), () {
         if (currentPhase != GamePhase.voting || currentState != PlayState.playing) return;
-        
+
         final targets = alivePlayers.where((p) => p.id != bot.id).toList();
         if (targets.isNotEmpty) {
           final target = targets[random.nextInt(targets.length)];
@@ -323,9 +323,9 @@ class GameController extends ChangeNotifier {
   void transitionToNight() {
     if (hunterSkillTriggered) return;
     stopPeriodicBotChat();
-    
+
     List<OnlinePlayer> alivePlayers = players.where((p) => p.isAlive).toList();
-    
+
     OnlinePlayer? hangedPlayer;
     int maxVotes = 0;
     for (var p in alivePlayers) {
@@ -397,7 +397,7 @@ class GameController extends ChangeNotifier {
     int remainingSlots = playerCount - targetWolves;
     int targetSpecials = min(specialPool.length, remainingSlots);
     allocatedRoles.addAll(specialPool.take(targetSpecials));
-    
+
     RoleDefinition villagerDef = roleDefinitions.firstWhere((r) => r.id == 'dan');
     while (allocatedRoles.length < playerCount) allocatedRoles.add(villagerDef);
     allocatedRoles.shuffle(random);
@@ -618,8 +618,8 @@ class GameController extends ChangeNotifier {
     }
 
     // Nếu không có player nào (đang ở Lobby lúc chưa init), dùng tên ảo
-    final String botName = aliveBots.isNotEmpty 
-        ? aliveBots[random.nextInt(aliveBots.length)].name 
+    final String botName = aliveBots.isNotEmpty
+        ? aliveBots[random.nextInt(aliveBots.length)].name
         : ['Tuấn Tú', 'Khánh Linh', 'Nhật Minh', 'Phương Thảo'][random.nextInt(4)];
 
     String replyContent = '';
@@ -692,7 +692,7 @@ class GameController extends ChangeNotifier {
 
     final bot = aliveBots[random.nextInt(aliveBots.length)];
     final suspects = players.where((p) => p.isAlive && p.id != bot.id).toList();
-    
+
     String content = '';
     if (suspects.isNotEmpty) {
       final target = suspects[random.nextInt(suspects.length)];

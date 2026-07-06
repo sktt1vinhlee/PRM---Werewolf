@@ -600,7 +600,7 @@ class _PlayScreenState extends State<PlayScreen> {
         final isTargetBitten = _controller.werewolfTarget?.id == target.id;
         final showHeal = _controller.hasHealPotion && isTargetBitten;
         final showPoison = _controller.hasPoisonPotion && target.isAlive && target.id != myPlayer.id;
-        
+
         if (showHeal && showPoison) {
           return Row(children: [
             Expanded(child: ElevatedButton.icon(onPressed: () => _controller.executeWitchHeal(), icon: const Icon(Icons.health_and_safety), label: const Text('CỨU', style: TextStyle(fontSize: 10)), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2E7D32), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(vertical: 14)))),
