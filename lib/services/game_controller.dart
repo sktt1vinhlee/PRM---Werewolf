@@ -7,9 +7,8 @@ import '../models/online_player.dart';
 import '../models/chat_message.dart';
 
 class GameController extends ChangeNotifier {
-  // ==========================================
-  // STATE VARIABLES
-  // ==========================================
+  static final Set<String> activeRooms = {}; // Lưu trữ các mã phòng đang hoạt động
+
   PlayState currentState = PlayState.lobby;
   GamePhase currentPhase = GamePhase.night;
   int playerCount = 12;
@@ -19,16 +18,16 @@ class GameController extends ChangeNotifier {
   int dayNumber = 1;
 
   List<OnlinePlayer> players = [];
+  List<String> lobbyPlayerNames = [];
   OnlinePlayer? myPlayer;
   OnlinePlayer? selectedPlayer;
   List<String> actionLogs = [];
   List<ChatMessage> chatMessages = [];
-
-  // Timer state
+  
   int phaseTimerSeconds = 0;
   Timer? _phaseTimer;
+  Timer? botChatTimer;
 
-  // Night action variables
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
   int? lastProtectedPlayerId;
@@ -38,7 +37,6 @@ class GameController extends ChangeNotifier {
   bool hasUsedPoisonThisNight = false;
   OnlinePlayer? werewolfTarget;
 
-  // Role states
   OnlinePlayer? lover1;
   OnlinePlayer? lover2;
   int? cursedPlayerId;
@@ -48,46 +46,45 @@ class GameController extends ChangeNotifier {
   OnlinePlayer? hunterWhoDied;
   List<OnlinePlayer> cupidSelections = [];
 
-  Timer? botChatTimer;
-
-  // ==========================================
-  // ROLE DEFINITIONS
-  // ==========================================
   final List<RoleDefinition> roleDefinitions = [
-    RoleDefinition(id: 'dan', name: 'Dân Làng', description: 'Không có chức năng, giết hết sói thì win.', team: RoleTeam.villager, icon: Icons.person, primaryColor: const Color(0xFF2E7D32), secondaryColor: const Color(0xFF4CAF50), isUnique: false),
-    RoleDefinition(id: 'soi', name: 'Ma Sói', description: 'Giết dân ban đêm. Số sói bằng số dân thì win.', team: RoleTeam.werewolf, icon: Icons.pets, primaryColor: const Color(0xFFC62828), secondaryColor: const Color(0xFFEF5350), isUnique: false),
-    RoleDefinition(id: 'soi_nguyen', name: 'Sói Nguyền', description: 'Nguyền 1 dân thành sói, khi tiên tri xem thg dân thành sói.', team: RoleTeam.werewolf, icon: Icons.auto_awesome, primaryColor: const Color(0xFF8E24AA), secondaryColor: const Color(0xFFBA68C8), isUnique: true),
-    RoleDefinition(id: 'soi_dau_dan', name: 'Sói Đầu Đàn', description: '1 vote = 2 vote sói thường.', team: RoleTeam.werewolf, icon: Icons.gavel, primaryColor: const Color(0xFFD84315), secondaryColor: const Color(0xFFFF7043), isUnique: true),
-    RoleDefinition(id: 'xa_thu', name: 'Xạ Thủ', description: 'Có 2 viên đạn, chỉ bắn vào ban ngày, bắn lần đầu thì lộ role.', team: RoleTeam.villager, icon: Icons.gps_fixed, primaryColor: const Color(0xFF0277BD), secondaryColor: const Color(0xFF29B6F6), isUnique: true),
-    RoleDefinition(id: 'tien_tri', name: 'Tiên Tri', description: 'Soi sói, phe dân.', team: RoleTeam.villager, icon: Icons.remove_red_eye, primaryColor: const Color(0xFF00838F), secondaryColor: const Color(0xFF26C6DA), isUnique: true),
-    RoleDefinition(id: 'cupid', name: 'Cupid', description: 'Ghép 2 đứa với nhau. (2 đứa xem thẻ nhau, chết cả đôi), phe dân.', team: RoleTeam.villager, icon: Icons.favorite, primaryColor: const Color(0xFFAD1457), secondaryColor: const Color(0xFFEC407A), isUnique: true),
-    RoleDefinition(id: 'tho_san', name: 'Thợ Săn', description: 'Chết thì đem thêm 1 đứa chết cùng, phe dân.', team: RoleTeam.villager, icon: Icons.colorize, primaryColor: const Color(0xFFEF6C00), secondaryColor: const Color(0xFFFFA726), isUnique: true),
-    RoleDefinition(id: 'bao_ve', name: 'Bảo Vệ', description: 'Mỗi đêm bảo vệ 1 đứa, không được bảo vệ 1 đứa 2 đêm liên tục, phe dân.', team: RoleTeam.villager, icon: Icons.shield, primaryColor: const Color(0xFF1565C0), secondaryColor: const Color(0xFF42A5F5), isUnique: true),
-    RoleDefinition(id: 'phu_thuy', name: 'Phù Thủy', description: '1 bình cứu 1 bình giết ban đêm thích dùng lúc nào cũng được, phe dân.', team: RoleTeam.villager, icon: Icons.science, primaryColor: const Color(0xFF6A1B9A), secondaryColor: const Color(0xFFAB47BC), isUnique: true),
-    RoleDefinition(id: 'nerd', name: 'Kẻ Ngốc (Nerd)', description: 'Thằng ngu, bên t3 nó chết treo cổ thì nó win.', team: RoleTeam.neutral, icon: Icons.psychology, primaryColor: const Color(0xFF9E9D24), secondaryColor: const Color(0xFFD4E157), isUnique: true),
+    RoleDefinition(id: 'dan', name: 'Dân Làng', description: 'Tìm kiếm và bỏ phiếu tiêu diệt bầy Sói bằng sức mạnh đoàn kết ban ngày.', team: RoleTeam.villager, icon: Icons.person, primaryColor: const Color(0xFF2E7D32), secondaryColor: const Color(0xFF4CAF50), isUnique: false),
+    RoleDefinition(id: 'soi', name: 'Ma Sói', description: 'Thống nhất sát hại một nạn nhân mỗi đêm và ẩn mình khéo léo giữa dân làng.', team: RoleTeam.werewolf, icon: Icons.pets, primaryColor: const Color(0xFFC62828), secondaryColor: const Color(0xFFEF5350), isUnique: false),
+    RoleDefinition(id: 'soi_nguyen', name: 'Sói Nguyền', description: 'Chọn một người để nguyền rủa; nếu người đó bị cắn, họ sẽ gia nhập phe Sói.', team: RoleTeam.werewolf, icon: Icons.auto_awesome, primaryColor: const Color(0xFF8E24AA), secondaryColor: const Color(0xFFBA68C8), isUnique: true),
+    RoleDefinition(id: 'soi_dau_dan', name: 'Sói Đầu Đàn', description: 'Lá phiếu bình chọn của Sói Đầu Đàn trong bầy Sói có giá trị gấp đôi.', team: RoleTeam.werewolf, icon: Icons.gavel, primaryColor: const Color(0xFFD84315), secondaryColor: const Color(0xFFFF7043), isUnique: true),
+    RoleDefinition(id: 'xa_thu', name: 'Xạ Thủ', description: 'Có 2 viên đạn để bắn vào ban ngày. Khi bắn lần đầu, tiếng súng nổ lớn sẽ khiến vai trò bị tiết lộ.', team: RoleTeam.villager, icon: Icons.gps_fixed, primaryColor: const Color(0xFF0277BD), secondaryColor: const Color(0xFF29B6F6), isUnique: true),
+    RoleDefinition(id: 'tien_tri', name: 'Tiên Tri', description: 'Mỗi đêm soi 1 người chơi để biết họ thuộc phe Dân Làng hay phe Ma Sói.', team: RoleTeam.villager, icon: Icons.remove_red_eye, primaryColor: const Color(0xFF00838F), secondaryColor: const Color(0xFF26C6DA), isUnique: true),
+    RoleDefinition(id: 'cupid', name: 'Cupid', description: 'Ghép đôi 2 người; nếu một người qua đời, người còn lại cũng sẽ chết theo.', team: RoleTeam.villager, icon: Icons.favorite, primaryColor: const Color(0xFFAD1457), secondaryColor: const Color(0xFFEC407A), isUnique: true),
+    RoleDefinition(id: 'tho_san', name: 'Thợ Săn', description: 'Ngay khi hy sinh, có thể chọn nổ súng kéo theo một người chơi khác.', team: RoleTeam.villager, icon: Icons.colorize, primaryColor: const Color(0xFFEF6C00), secondaryColor: const Color(0xFFFFA726), isUnique: true),
+    RoleDefinition(id: 'bao_ve', name: 'Bảo Vệ', description: 'Mỗi đêm bảo vệ 1 người khỏi Sói (không bảo vệ 1 người 2 đêm liên tiếp).', team: RoleTeam.villager, icon: Icons.shield, primaryColor: const Color(0xFF1565C0), secondaryColor: const Color(0xFF42A5F5), isUnique: true),
+    RoleDefinition(id: 'phu_thuy', name: 'Phù Thủy', description: 'Sở hữu 1 bình cứu người chết trong đêm và 1 bình thuốc độc để sát hại.', team: RoleTeam.villager, icon: Icons.science, primaryColor: const Color(0xFF6A1B9A), secondaryColor: const Color(0xFFAB47BC), isUnique: true),
+    RoleDefinition(id: 'nerd', name: 'Kẻ Ngốc', description: 'Giành chiến thắng duy nhất nếu bị dân làng bỏ phiếu treo cổ vào ban ngày.', team: RoleTeam.neutral, icon: Icons.psychology, primaryColor: const Color(0xFF9E9D24), secondaryColor: const Color(0xFFD4E157), isUnique: true),
   ];
 
-  GameController() {
-    generateRoomCode();
+  GameController({String? initialRoomCode}) {
+    if (initialRoomCode != null) {
+      roomCode = initialRoomCode;
+      // Giả lập phòng đã có Host, bạn là người tham gia
+      lobbyPlayerNames = ['Chủ phòng', userName];
+    } else {
+      generateRoomCode();
+      // Bạn là Host, phòng ban đầu chỉ có mình bạn
+      lobbyPlayerNames = [userName];
+    }
     initializeLobbyChat();
   }
 
-  // ==========================================
-  // ROOM API
-  // ==========================================
   void generateRoomCode() {
     final random = Random();
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     roomCode = 'WS-${List.generate(6, (index) => chars[random.nextInt(chars.length)]).join()}';
+    activeRooms.add(roomCode); // Đưa mã phòng vào danh sách hoạt động khi tạo mới
     notifyListeners();
   }
 
   void startLobbyTransition() {
     isLobbyLoading = true;
     notifyListeners();
-    Future.delayed(const Duration(milliseconds: 1000), () {
-      initializeOnlineGame();
-    });
+    Future.delayed(const Duration(milliseconds: 1000), () => initializeOnlineGame());
   }
 
   void resetGame() {
@@ -95,42 +92,27 @@ class GameController extends ChangeNotifier {
     _phaseTimer?.cancel();
     currentState = PlayState.lobby;
     selectedPlayer = null;
-    generateRoomCode();
     players = [];
     myPlayer = null;
     actionLogs = [];
     isLobbyLoading = false;
-    lover1 = null;
-    lover2 = null;
-    cursedPlayerId = null;
-    xathuBullets = 2;
-    xathuRevealed = false;
-    hunterSkillTriggered = false;
-    hunterWhoDied = null;
-    cupidSelections = [];
+    generateRoomCode();
     initializeLobbyChat();
     notifyListeners();
   }
 
-  // ==========================================
-  // PLAYER API
-  // ==========================================
-  void updateUserName(String name) {
-    userName = name;
-    notifyListeners();
+  void updateUserName(String name) { 
+    // Cập nhật tên trong danh sách phòng chờ
+    int index = lobbyPlayerNames.indexOf(userName);
+    if (index != -1) {
+      lobbyPlayerNames[index] = name;
+    }
+    userName = name; 
+    notifyListeners(); 
   }
+  void updatePlayerCount(int count) { playerCount = count; notifyListeners(); }
+  void selectPlayer(OnlinePlayer? player) { selectedPlayer = player; notifyListeners(); }
 
-  void updatePlayerCount(int count) {
-    playerCount = count;
-    notifyListeners();
-  }
-
-  void selectPlayer(OnlinePlayer? player) {
-    selectedPlayer = player;
-    notifyListeners();
-  }
-
-  // Logic Moved from PlayScreen UI
   bool shouldRevealRole(OnlinePlayer player) {
     if (!player.isAlive) return true;
     if (player.id == myPlayer?.id) return true;
@@ -153,7 +135,6 @@ class GameController extends ChangeNotifier {
       final isWolf = player.role.team == RoleTeam.werewolf || player.id == cursedPlayerId;
       return isWolf ? const Color(0xFFEF5350) : const Color(0xFF81C784);
     }
-    if (xathuRevealed && player.role.id == 'xa_thu') return player.role.primaryColor;
     return Colors.white24;
   }
 
@@ -164,42 +145,28 @@ class GameController extends ChangeNotifier {
   }
 
   bool shouldShowLoverHeart(OnlinePlayer player) {
-    if (!player.isAlive) return false;
-    if (lover1 == null || lover2 == null) return false;
-    final isUserCupid = myPlayer?.role.id == 'cupid';
-    final isUserLover = myPlayer?.id == lover1!.id || myPlayer?.id == lover2!.id;
-    if ((isUserCupid || isUserLover) && (player.id == lover1!.id || player.id == lover2!.id)) {
-      return true;
-    }
-    return false;
+    if (!player.isAlive || lover1 == null || lover2 == null) return false;
+    final isLover = player.id == lover1!.id || player.id == lover2!.id;
+    final canSee = myPlayer?.role.id == 'cupid' || myPlayer?.id == lover1!.id || myPlayer?.id == lover2!.id;
+    return isLover && canSee;
   }
 
-  // ==========================================
-  // CHAT API
-  // ==========================================
   void initializeLobbyChat() {
     chatMessages = [
-      ChatMessage(senderName: 'Hệ thống', content: 'Tạo phòng thành công. Đang chờ người chơi khác kết nối...', isSystem: true, time: DateTime.now()),
-      ChatMessage(senderName: 'Tuấn Tú', content: 'Chào cả phòng nha, có ai ở đây chưa?', time: DateTime.now().subtract(const Duration(seconds: 15))),
-      ChatMessage(senderName: 'Khánh Linh', content: 'Hello, chúc mọi người game mới vui vẻ nhé!', time: DateTime.now().subtract(const Duration(seconds: 10))),
+      ChatMessage(senderName: 'Hệ thống', content: 'Tạo phòng thành công. Đang chờ người chơi...', isSystem: true, time: DateTime.now()),
+      ChatMessage(senderName: 'Tuấn Tú', content: 'Chào cả phòng nha!', time: DateTime.now().subtract(const Duration(seconds: 15))),
     ];
-    actionLogs = [
-      'Hệ thống: Bạn đã kết nối và tham gia phòng $roomCode.',
-      'Hệ thống: Tuấn Tú đã tham gia phòng.',
-      'Hệ thống: Khánh Linh đã tham gia phòng.',
-    ];
-    notifyListeners();
+    actionLogs = ['Hệ thống: Bạn đã tham gia phòng $roomCode.', 'Hệ thống: Tuấn Tú đã tham gia phòng.'];
   }
 
   void sendUserMessage(String text) {
     if (text.trim().isEmpty) return;
-    final isNight = currentState == PlayState.playing && currentPhase == GamePhase.night;
-    final isWolfChannel = isNight && myPlayer?.role.team == RoleTeam.werewolf;
+    final isWolfChannel = currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf;
     chatMessages.add(ChatMessage(
       senderName: '$userName (Bạn)',
       content: text,
       isWerewolfOnly: isWolfChannel,
-      isGhost: currentState == PlayState.playing && myPlayer != null && !myPlayer!.isAlive,
+      isGhost: !myPlayer!.isAlive,
       time: DateTime.now(),
     ));
     simulateBotChatResponse(text);
@@ -208,25 +175,17 @@ class GameController extends ChangeNotifier {
 
   bool isChatDisabled() {
     if (currentState != PlayState.playing) return false;
-    if (currentPhase == GamePhase.night) {
-      return myPlayer?.role.team != RoleTeam.werewolf;
-    }
+    if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf;
     return false;
   }
 
   String getChatHintText() {
     if (currentState != PlayState.playing) return 'Nhập tin nhắn...';
-    if (currentPhase == GamePhase.night) {
-      if (myPlayer?.role.team != RoleTeam.werewolf) return 'Ban đêm không thể nói chuyện.';
-      return 'Chat Bầy Sói...';
-    }
-    if (myPlayer != null && !myPlayer!.isAlive) return 'Kênh Hồn Ma...';
+    if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf ? 'Ban đêm không thể nói chuyện.' : 'Chat Bầy Sói...';
+    if (!myPlayer!.isAlive) return 'Kênh Hồn Ma...';
     return 'Nhập tin nhắn...';
   }
 
-  // ==========================================
-  // VOTE & PHASE API
-  // ==========================================
   void startPhaseTimer(int seconds) {
     _phaseTimer?.cancel();
     phaseTimerSeconds = seconds;
@@ -236,13 +195,9 @@ class GameController extends ChangeNotifier {
         notifyListeners();
       } else {
         timer.cancel();
-        if (currentPhase == GamePhase.night) {
-          transitionToDay();
-        } else if (currentPhase == GamePhase.day) {
-          transitionToVoting();
-        } else {
-          transitionToNight();
-        }
+        if (currentPhase == GamePhase.night) transitionToDay();
+        else if (currentPhase == GamePhase.day) transitionToVoting();
+        else transitionToNight();
       }
     });
   }
@@ -250,491 +205,245 @@ class GameController extends ChangeNotifier {
   void transitionToDay() {
     if (hunterSkillTriggered) return;
     stopPeriodicBotChat();
-    if (werewolfTarget != null && !werewolfTarget!.isProtected) {
-      killPlayer(werewolfTarget!, 'Hệ thống: Đêm qua, ${werewolfTarget!.name} đã bị Ma Sói cắn chết! 🩸');
-    }
+    if (werewolfTarget != null && !werewolfTarget!.isProtected) killPlayer(werewolfTarget!, 'Hệ thống: Đêm qua, ${werewolfTarget!.name} đã bị Ma Sói cắn chết! 🩸');
+    for (var p in players) if (p.isPoisoned && p.isAlive) killPlayer(p, 'Hệ thống: Đêm qua, Phù Thủy đã độc chết ${p.name}! 🧪');
+    addLog('Hệ thống: Bình minh đã lên! Thảo luận (60s).');
     for (var p in players) {
-      if (p.isPoisoned && p.isAlive) killPlayer(p, 'Hệ thống: Đêm qua, Phù Thủy đã độc chết ${p.name}! 🧪');
+      p.isProtected = false; p.isPoisoned = false; p.voteCount = 0; p.isTargeted = false;
+      p.wasProtectedByBodyguard = false; p.wasHealedByWitch = false;
     }
-    addLog('Hệ thống: Bình minh đã lên! Bắt đầu thảo luận (60s).');
-    if (dayNumber == 1 && lover1 != null && lover2 != null) {
-      if (myPlayer?.id == lover1!.id) addLog('Hệ thống: Bạn đã bị Cupid ghép đôi with ${lover2!.name}! ❤️');
-      else if (myPlayer?.id == lover2!.id) addLog('Hệ thống: Bạn đã bị Cupid ghép đôi with ${lover1!.name}! ❤️');
-    }
-    for (var p in players) {
-      p.isProtected = false;
-      p.isPoisoned = false;
-      p.voteCount = 0;
-      p.isTargeted = false;
-    }
-    hasUsedSeerScan = false;
-    hasUsedBodyguardProtect = false;
-    hasUsedHealThisNight = false;
-    hasUsedPoisonThisNight = false;
-    selectedPlayer = null;
-    currentPhase = GamePhase.day;
-    checkGameOver();
-    if (currentState == PlayState.playing) {
-      startPeriodicBotChat();
-      startPhaseTimer(60);
-    }
+    hasUsedSeerScan = false; hasUsedBodyguardProtect = false; hasUsedHealThisNight = false; hasUsedPoisonThisNight = false;
+    selectedPlayer = null; currentPhase = GamePhase.day;
+    if (checkGameOver().isEmpty) { startPeriodicBotChat(); startPhaseTimer(60); }
     notifyListeners();
   }
 
   void transitionToVoting() {
     if (hunterSkillTriggered) return;
     stopPeriodicBotChat();
-    addLog('Hệ thống: Hết thời gian thảo luận. Bắt đầu bỏ phiếu (15s)!');
+    addLog('Hệ thống: Bắt đầu bỏ phiếu (15s)!');
     currentPhase = GamePhase.voting;
-    selectedPlayer = null;
-
-    // Reset all votes before starting new voting session
-    for (var p in players) {
-      p.voteCount = 0;
-      p.isTargeted = false;
-    }
-
+    for (var p in players) { p.voteCount = 0; p.isTargeted = false; }
     _simulateBotVotesGradually();
     startPhaseTimer(15);
     notifyListeners();
   }
 
-  void _simulateBotVotesGradually() {
-    final random = Random();
-    final alivePlayers = players.where((p) => p.isAlive).toList();
-    final bots = alivePlayers.where((p) => p.id != myPlayer?.id).toList();
-
-    for (var bot in bots) {
-      // Bots will vote at random times during the 15s window
-      Timer(Duration(milliseconds: 500 + random.nextInt(12000)), () {
-        if (currentPhase != GamePhase.voting || currentState != PlayState.playing) return;
-
-        final targets = alivePlayers.where((p) => p.id != bot.id).toList();
-        if (targets.isNotEmpty) {
-          final target = targets[random.nextInt(targets.length)];
-          final weight = bot.role.id == 'soi_dau_dan' ? 2 : 1;
-          target.voteCount += weight;
-          notifyListeners();
-        }
-      });
-    }
-  }
-
   void transitionToNight() {
     if (hunterSkillTriggered) return;
     stopPeriodicBotChat();
-
-    List<OnlinePlayer> alivePlayers = players.where((p) => p.isAlive).toList();
-
-    OnlinePlayer? hangedPlayer;
-    int maxVotes = 0;
-    for (var p in alivePlayers) {
-      if (p.voteCount > maxVotes) {
-        maxVotes = p.voteCount;
-        hangedPlayer = p;
-      } else if (p.voteCount == maxVotes && maxVotes > 0) {
-        // Simple tie-breaker: 50% chance to switch or keep
-        if (Random().nextBool()) hangedPlayer = p;
-      }
+    List<OnlinePlayer> alive = players.where((p) => p.isAlive).toList();
+    OnlinePlayer? hanged; int maxV = 0;
+    for (var p in alive) {
+      if (p.voteCount > maxV) { maxV = p.voteCount; hanged = p; }
+      else if (p.voteCount == maxV && maxV > 0 && Random().nextBool()) hanged = p;
     }
-
-    if (hangedPlayer != null && maxVotes > 0) {
-      final isWolf = hangedPlayer.role.team == RoleTeam.werewolf || hangedPlayer.id == cursedPlayerId;
-      killPlayer(hangedPlayer, 'Hệ thống: ${hangedPlayer.name} bị treo cổ với $maxVotes phiếu! Vai trò thực tế: ${hangedPlayer.role.name} (${isWolf ? "Phe Sói" : "Phe Dân"}) ⚖️');
-    } else {
-      addLog('Hệ thống: Hòa phiếu hoặc không ai bị vote. Không ai bị treo cổ hôm nay.');
-    }
-
-    for (var p in players) {
-      p.voteCount = 0;
-      p.isTargeted = false;
-    }
-    selectedPlayer = null;
-    dayNumber++;
-    currentPhase = GamePhase.night;
-    addLog('Hệ thống: ĐÊM $dayNumber bắt đầu. Mọi người nhắm mắt ngủ...');
-    checkGameOver();
-    if (currentState == PlayState.playing) {
-      simulateWerewolfNightTarget();
-      startPhaseTimer(15);
-    }
+    if (hanged != null && maxV > 0) {
+      final isW = hanged.role.team == RoleTeam.werewolf || hanged.id == cursedPlayerId;
+      killPlayer(hanged, 'Hệ thống: ${hanged.name} bị treo cổ! Vai trò: ${hanged.role.name} (${isW ? "Phe Sói" : "Phe Dân"}) ⚖️');
+    } else addLog('Hệ thống: Không ai bị treo cổ.');
+    for (var p in players) p.voteCount = 0;
+    dayNumber++; currentPhase = GamePhase.night; selectedPlayer = null;
+    addLog('Hệ thống: ĐÊM $dayNumber bắt đầu.');
+    if (checkGameOver().isEmpty) { simulateWerewolfNightTarget(); startPhaseTimer(15); }
     notifyListeners();
   }
 
   void executeVote(OnlinePlayer target) {
-    final voteWeight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
-    for (var p in players) {
-      if (p.isTargeted) {
-        p.voteCount -= voteWeight;
-        p.isTargeted = false;
-      }
-    }
-    target.voteCount += voteWeight;
-    target.isTargeted = true;
-    addLog('Thảo Luận: Bạn bỏ phiếu vote ${target.name} ($voteWeight phiếu).');
-    selectedPlayer = null;
+    final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
+    for (var p in players) if (p.isTargeted) { p.voteCount -= weight; p.isTargeted = false; }
+    target.voteCount += weight; target.isTargeted = true;
     notifyListeners();
   }
 
-  // ==========================================
-  // ROLE & SKILL API
-  // ==========================================
   void initializeOnlineGame() {
-    final random = Random();
-    List<RoleDefinition> allocatedRoles = [];
-    lover1 = null; lover2 = null; cursedPlayerId = null; xathuBullets = 2; xathuRevealed = false;
-    hunterSkillTriggered = false; hunterWhoDied = null; cupidSelections = [];
-
+    final random = Random(); List<RoleDefinition> roles = [];
     int targetWolves = max(1, (playerCount / 4).round());
     List<RoleDefinition> wolfPool = [];
     if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
     if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
     while (wolfPool.length < targetWolves) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
-    allocatedRoles.addAll(wolfPool);
+    roles.addAll(wolfPool);
+    List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
+    roles.addAll(specials.take(min(specials.length, playerCount - roles.length)));
+    while (roles.length < playerCount) roles.add(roleDefinitions.firstWhere((r) => r.id == 'dan'));
+    roles.shuffle(random);
+    final names = ['Minh Đức', 'Khánh Linh', 'Tuấn Tú', 'Hoài Thu', 'Gia Bảo', 'Quỳnh Anh', 'Nhật Minh', 'Phương Thảo', 'Thanh Lâm', 'Mai Chi', 'Trí Dũng', 'Ngọc Diệp'];
+    int myIdx = random.nextInt(playerCount);
+    players = List.generate(playerCount, (i) => OnlinePlayer(id: i + 1, name: i == myIdx ? '$userName (Bạn)' : names[i % names.length], role: roles[i], isHost: i == 0));
+    myPlayer = players[myIdx];
 
-    List<RoleDefinition> specialPool = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList();
-    specialPool.shuffle(random);
-    int remainingSlots = playerCount - targetWolves;
-    int targetSpecials = min(specialPool.length, remainingSlots);
-    allocatedRoles.addAll(specialPool.take(targetSpecials));
-
-    RoleDefinition villagerDef = roleDefinitions.firstWhere((r) => r.id == 'dan');
-    while (allocatedRoles.length < playerCount) allocatedRoles.add(villagerDef);
-    allocatedRoles.shuffle(random);
-
-    final names = ['Minh Đức', 'Khánh Linh', 'Sơn Hải', 'Tuấn Tú', 'Hoài Thu', 'Gia Bảo', 'Quỳnh Anh', 'Nhật Minh', 'Phương Thảo', 'Hồng Quân', 'Thanh Lâm', 'Mai Chi', 'Trí Dũng', 'Ngọc Diệp', 'Thu Trang', 'Thế Anh', 'Yến Vy', 'Văn Nam'];
-    names.shuffle(random);
-    int myIndex = random.nextInt(playerCount);
-
-    List<OnlinePlayer> list = [];
-    for (int i = 0; i < playerCount; i++) {
-      list.add(OnlinePlayer(
-        id: i + 1,
-        name: i == myIndex ? '$userName (Bạn)' : names[i % names.length],
-        role: allocatedRoles[i],
-        isHost: i == 0,
-      ));
-    }
-
-    players = list;
-    myPlayer = list[myIndex];
-    selectedPlayer = null; dayNumber = 1; currentPhase = GamePhase.night;
-    hasHealPotion = true; hasPoisonPotion = true; hasUsedSeerScan = false; hasUsedBodyguardProtect = false; lastProtectedPlayerId = null;
-
-    actionLogs = ['Hệ thống: Phòng đấu $roomCode đã được khởi tạo!', 'Hệ thống: Bạn đã kết nối.', 'Hệ thống: Trò chơi BẮT ĐẦU!', 'Hệ thống: ĐÊM 1 bắt đầu.'];
-    chatMessages = [ChatMessage(senderName: 'Hệ thống', content: 'Trận đấu bắt đầu!', isSystem: true, time: DateTime.now())];
-    if (myPlayer!.role.team == RoleTeam.werewolf) chatMessages.add(ChatMessage(senderName: 'Hệ thống', content: 'Kênh chat Bầy Sói đã mở.', isSystem: true, isWerewolfOnly: true, time: DateTime.now()));
-
-    currentState = PlayState.playing;
+    // Chuyển sang trạng thái lật thẻ bài (Role Reveal) trước khi bắt đầu
+    currentState = PlayState.roleReveal;
     isLobbyLoading = false;
-    simulateWerewolfNightTarget();
-    startPhaseTimer(15);
     notifyListeners();
-  }
 
-  void killPlayer(OnlinePlayer player, String reason) {
-    if (!player.isAlive) return;
-    player.isAlive = false;
-    addLog(reason);
-    if (lover1 != null && lover2 != null) {
-      if (player.id == lover1!.id && lover2!.isAlive) killPlayer(lover2!, 'Hệ thống: ${lover1!.name} đã hy sinh. ${lover2!.name} tự sát! 💔');
-      else if (player.id == lover2!.id && lover1!.isAlive) killPlayer(lover1!, 'Hệ thống: ${lover2!.name} đã hy sinh. ${lover1!.name} tự sát! 💔');
-    }
-    if (player.role.id == 'tho_san') {
-      if (player.id == myPlayer?.id) {
-        hunterSkillTriggered = true;
-        hunterWhoDied = player;
-      } else simulateBotHunterShot(player);
-    }
-    notifyListeners();
-  }
-
-  // Skill Methods
-  void executeSeerScan(OnlinePlayer target) {
-    if (hasUsedSeerScan) return;
-    target.hasBeenScannedBySeer = true;
-    hasUsedSeerScan = true;
-    final isWolf = target.role.team == RoleTeam.werewolf || target.id == cursedPlayerId;
-    addLog('Tiên Tri: Bạn đã soi ${target.name}. Kết quả: Phe ${isWolf ? "MA SÓI 🔴" : "DÂN LÀNG 🟢"}');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeBodyguardProtect(OnlinePlayer target) {
-    if (hasUsedBodyguardProtect || target.id == lastProtectedPlayerId) return;
-    target.isProtected = true;
-    hasUsedBodyguardProtect = true;
-    lastProtectedPlayerId = target.id;
-    addLog('Bảo Vệ: Bạn đã bảo vệ ${target.name} đêm nay.');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeWitchHeal() {
-    if (!hasHealPotion || werewolfTarget == null || hasUsedHealThisNight) return;
-    werewolfTarget!.isProtected = true;
-    hasHealPotion = false;
-    hasUsedHealThisNight = true;
-    addLog('Phù Thủy: Bạn đã cứu ${werewolfTarget!.name}.');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeWitchPoison(OnlinePlayer target) {
-    if (!hasPoisonPotion || !target.isAlive || hasUsedPoisonThisNight) return;
-    target.isPoisoned = true;
-    hasPoisonPotion = false;
-    hasUsedPoisonThisNight = true;
-    addLog('Phù Thủy: Bạn đã dùng độc lên ${target.name}.');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeWerewolfBite(OnlinePlayer target) {
-    werewolfTarget = target;
-    addLog('Ma Sói: Bạn quyết định cắn ${target.name}.');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeCupidLink() {
-    if (cupidSelections.length != 2) return;
-    lover1 = cupidSelections[0];
-    lover2 = cupidSelections[1];
-    addLog('Cupid: Kết đôi ${lover1!.name} và ${lover2!.name}! ❤️');
-    selectedPlayer = null;
-    cupidSelections = [];
-    notifyListeners();
-  }
-
-  void executeCurse(OnlinePlayer target) {
-    if (cursedPlayerId != null) return;
-    cursedPlayerId = target.id;
-    addLog('Sói Nguyền: Bạn đã nguyền rủa ${target.name}.');
-    selectedPlayer = null;
-    notifyListeners();
-  }
-
-  void executeGunnerShoot(OnlinePlayer target) {
-    if (xathuBullets <= 0) return;
-    xathuBullets--;
-    xathuRevealed = true;
-    selectedPlayer = null;
-    killPlayer(target, 'Xạ Thủ: Đã bắn chết ${target.name}!');
-    checkGameOver();
-    notifyListeners();
-  }
-
-  void executeHunterShot(OnlinePlayer target) {
-    if (!hunterSkillTriggered || hunterWhoDied == null) return;
-    hunterSkillTriggered = false;
-    final hunterName = hunterWhoDied!.name;
-    hunterWhoDied = null;
-    selectedPlayer = null;
-    killPlayer(target, 'Thợ Săn ($hunterName) đã bắn chết ${target.name}!');
-    checkGameOver();
-    notifyListeners();
-  }
-
-  // ==========================================
-  // UI LOGIC API (Moved from PlayScreen)
-  // ==========================================
-  String getActionInstructionText() {
-    if (hunterSkillTriggered) return 'BẠN ĐÃ CHẾT! Hãy chọn 1 người chơi và bấm [BẮN KÉO THEO]!';
-    if (selectedPlayer == null) {
-      if (currentPhase == GamePhase.night) {
-        if (myPlayer!.role.id == 'cupid' && lover1 == null) return 'Hãy chọn lần lượt 2 người và bấm Ghép đôi.';
-        if (myPlayer!.role.id == 'tien_tri' && !hasUsedSeerScan) return 'Hãy chọn 1 người để soi bài.';
-        if (myPlayer!.role.id == 'bao_ve' && !hasUsedBodyguardProtect) return 'Hãy chọn 1 người để đặt khiên bảo vệ.';
-        if (myPlayer!.role.id == 'phu_thuy') {
-          if (hasHealPotion && werewolfTarget != null) return '${werewolfTarget!.name} bị cắn. Cứu họ?';
-          return 'Hãy chọn mục tiêu để dùng bình thuốc.';
-        }
-        if (myPlayer!.role.id == 'soi_nguyen' && cursedPlayerId == null) return 'Có thể chọn 1 người để Nguyền rủa.';
-        if (myPlayer!.role.team == RoleTeam.werewolf) return 'Hãy chọn một nạn nhân để cắn càn đêm nay.';
-        return 'Nhắm mắt đi ngủ. Chờ chuyển phase...';
-      } else if (currentPhase == GamePhase.day) {
-        return 'Hãy thảo luận sôi nổi với mọi người (60s).';
-      } else {
-        String instr = 'Thời gian bỏ phiếu! Hãy chọn 1 người để vote treo cổ.';
-        if (myPlayer!.role.id == 'xa_thu' && xathuBullets > 0) instr += ' Bạn có thể bắn (Đạn: $xathuBullets/2).';
-        return instr;
-      }
-    } else {
-      if (myPlayer!.role.id == 'cupid' && lover1 == null) return 'Đang chọn: ${cupidSelections.map((p) => p.name).join(", ")}';
-      return 'Mục tiêu đang chọn: ${selectedPlayer!.name}';
-    }
-  }
-
-  String checkGameOver() {
-    if (currentState != PlayState.playing || players.isEmpty) return '';
-    int aliveWolves = players.where((p) => p.isAlive && (p.role.team == RoleTeam.werewolf || p.id == cursedPlayerId)).length;
-    int aliveGood = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).length;
-    if (aliveWolves == 0) {
-      _phaseTimer?.cancel();
-      stopPeriodicBotChat();
-      return 'Phe Dân Làng giành chiến thắng!';
-    } else if (aliveWolves >= aliveGood) {
-      _phaseTimer?.cancel();
-      stopPeriodicBotChat();
-      return 'Phe Ma Sói giành chiến thắng!';
-    }
-    return '';
-  }
-
-  bool isMyWin(String gameOverMsg) {
-    if (myPlayer == null) return false;
-    if (myPlayer!.role.team == RoleTeam.werewolf && gameOverMsg.contains('Ma Sói')) return true;
-    if (myPlayer!.role.team != RoleTeam.werewolf && gameOverMsg.contains('Dân Làng')) return true;
-    return false;
-  }
-
-  // ==========================================
-  // BOT SIMULATION
-  // ==========================================
-  void simulateWerewolfNightTarget() {
-    final random = Random();
-    List<OnlinePlayer> victims = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).toList();
-    if (victims.isNotEmpty) werewolfTarget = victims[random.nextInt(victims.length)];
-    notifyListeners();
-  }
-
-  void simulateBotChatResponse(String userMessage) {
-    final random = Random();
-    final isNight = currentState == PlayState.playing && currentPhase == GamePhase.night;
-
-    // Lấy danh sách bot có thể chat
-    List<OnlinePlayer> aliveBots = [];
-    if (currentState == PlayState.playing) {
-      aliveBots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
-      if (isNight) {
-        // Đêm thì chỉ Sói mới chat với nhau
-        if (myPlayer?.role.team == RoleTeam.werewolf) {
-          aliveBots = aliveBots.where((p) => p.role.team == RoleTeam.werewolf).toList();
-        } else {
-          return; // Dân không chat đêm
-        }
-      }
-    }
-
-    // Nếu không có player nào (đang ở Lobby lúc chưa init), dùng tên ảo
-    final String botName = aliveBots.isNotEmpty
-        ? aliveBots[random.nextInt(aliveBots.length)].name
-        : ['Tuấn Tú', 'Khánh Linh', 'Nhật Minh', 'Phương Thảo'][random.nextInt(4)];
-
-    String replyContent = '';
-    final lowerMsg = userMessage.toLowerCase();
-
-    if (currentState == PlayState.lobby) {
-      if (lowerMsg.contains('chào') || lowerMsg.contains('hi') || lowerMsg.contains('hello')) {
-        replyContent = ['Chào bạn!', 'Hi nha!', 'Hello, chúc mọi người game vui vẻ.'][random.nextInt(3)];
-      } else if (lowerMsg.contains('sẵn sàng') || lowerMsg.contains('go')) {
-        replyContent = ['Tui sẵn sàng rồi.', 'Vào thôi ae.', 'Ok luôn!'][random.nextInt(3)];
-      } else {
-        replyContent = ['Game này đông vui ghê.', 'Mong không làm dân làng.', 'Hóng quá!'][random.nextInt(3)];
-      }
-    } else {
-      // Logic khi đang chơi
-      if (isNight) {
-        if (lowerMsg.contains('cắn') || RegExp(r'\d+').hasMatch(lowerMsg)) {
-          final target = _extractPlayerMention(lowerMsg);
-          replyContent = ['Nhất trí, cắn $target đi.', 'Ok, cắn $target.', 'Đồng ý luôn.'][random.nextInt(3)];
-        } else {
-          replyContent = ['Tập trung cắn dân nha ae.', 'Bình tĩnh bàn bạc.', 'Đừng cắn nhầm sói mình.'][random.nextInt(3)];
-        }
-      } else {
-        if (lowerMsg.contains('soi') || lowerMsg.contains('tiên tri')) {
-          replyContent = ['Tiên tri có thông tin gì chưa?', 'Soi được ai chưa?', 'Ai là tiên tri vậy?'][random.nextInt(3)];
-        } else if (lowerMsg.contains('vote') || lowerMsg.contains('treo') || RegExp(r'\d+').hasMatch(lowerMsg)) {
-          final target = _extractPlayerMention(lowerMsg);
-          replyContent = ['Tôi cũng nghi $target.', 'Treo $target thử xem sao.', 'Ủa $target tự bào chữa đi!'][random.nextInt(3)];
-        } else {
-          replyContent = ['Mọi người thấy ai nghi vấn không?', 'Tôi là dân nhé.', 'Đừng vote bừa nha ae.'][random.nextInt(3)];
-        }
-      }
-    }
-
-    Timer(Duration(milliseconds: 600 + random.nextInt(600)), () {
-      chatMessages.add(ChatMessage(
-        senderName: botName,
-        content: replyContent,
-        isWerewolfOnly: isNight && myPlayer?.role.team == RoleTeam.werewolf,
-        isGhost: currentState == PlayState.playing && myPlayer != null && !myPlayer!.isAlive,
-        time: DateTime.now(),
-      ));
+    // Sau 5 giây xem role mới chính thức vào Đêm 1
+    Future.delayed(const Duration(seconds: 5), () {
+      if (currentState != PlayState.roleReveal) return; // Tránh trường hợp đã reset game
+      currentState = PlayState.playing;
+      dayNumber = 1;
+      currentPhase = GamePhase.night;
+      hasHealPotion = true; hasPoisonPotion = true; werewolfTarget = null;
+      xathuBullets = 2; xathuRevealed = false;
+      actionLogs = ['Hệ thống: Trò chơi BẮT ĐẦU!', 'Hệ thống: ĐÊM 1 bắt đầu.'];
+      chatMessages = [ChatMessage(senderName: 'Hệ thống', content: 'Trận đấu bắt đầu!', isSystem: true, time: DateTime.now())];
+      if (myPlayer!.role.team == RoleTeam.werewolf) chatMessages.add(ChatMessage(senderName: 'Hệ thống', content: 'Kênh chat Bầy Sói đã mở.', isSystem: true, isWerewolfOnly: true, time: DateTime.now()));
+      simulateWerewolfNightTarget();
+      startPhaseTimer(15);
       notifyListeners();
     });
   }
 
-  String _extractPlayerMention(String msg) {
-    final match = RegExp(r'\d+').firstMatch(msg);
-    if (match != null) return 'P${match.group(0)}';
-    return 'người đó';
+  void killPlayer(OnlinePlayer player, String reason) {
+    if (!player.isAlive) return;
+    player.isAlive = false; addLog(reason);
+    if (lover1 != null && lover2 != null) {
+      if (player.id == lover1!.id && lover2!.isAlive) killPlayer(lover2!, 'Hệ thống: Tình nhân hy sinh! 💔');
+      else if (player.id == lover2!.id && lover1!.isAlive) killPlayer(lover1!, 'Hệ thống: Tình nhân hy sinh! 💔');
+    }
+    if (player.role.id == 'tho_san') {
+      if (player.id == myPlayer?.id) { hunterSkillTriggered = true; hunterWhoDied = player; }
+      else simulateBotHunterShot(player);
+    }
+  }
+
+  void executeSeerScan(OnlinePlayer target) {
+    target.hasBeenScannedBySeer = true; hasUsedSeerScan = true;
+    final isW = target.role.team == RoleTeam.werewolf || target.id == cursedPlayerId;
+    addLog('Tiên Tri: ${target.name} là Phe ${isW ? "SÓI 🔴" : "DÂN 🟢"}');
+    selectedPlayer = null; notifyListeners();
+  }
+
+  void executeBodyguardProtect(OnlinePlayer target) {
+    target.isProtected = true; target.wasProtectedByBodyguard = true;
+    hasUsedBodyguardProtect = true; lastProtectedPlayerId = target.id;
+    addLog('Bảo Vệ: Bạn đã bảo vệ ${target.name}.');
+    selectedPlayer = null; notifyListeners();
+  }
+
+  void executeWitchHeal() {
+    werewolfTarget!.isProtected = true; werewolfTarget!.wasHealedByWitch = true;
+    hasHealPotion = false; hasUsedHealThisNight = true;
+    addLog('Phù Thủy: Bạn đã cứu ${werewolfTarget!.name}.');
+    selectedPlayer = null; notifyListeners();
+  }
+
+  void executeWitchPoison(OnlinePlayer target) {
+    target.isPoisoned = true; hasPoisonPotion = false; hasUsedPoisonThisNight = true;
+    addLog('Phù Thủy: Bạn đã độc chết ${target.name}.');
+    selectedPlayer = null; notifyListeners();
+  }
+
+  void executeWerewolfBite(OnlinePlayer target) { werewolfTarget = target; notifyListeners(); }
+
+  void executeCupidLink() {
+    lover1 = cupidSelections[0]; lover2 = cupidSelections[1];
+    addLog('Cupid: Kết đôi ${lover1!.name} & ${lover2!.name}! ❤️');
+    cupidSelections = []; selectedPlayer = null; notifyListeners();
+  }
+
+  void executeCurse(OnlinePlayer target) { cursedPlayerId = target.id; addLog('Sói Nguyền: Đã nguyền rủa ${target.name}.'); notifyListeners(); }
+
+  void executeGunnerShoot(OnlinePlayer target) {
+    if (xathuBullets <= 0 || !target.isAlive) return;
+    xathuBullets--; 
+    xathuRevealed = true;
+    
+    chatMessages.add(ChatMessage(
+      senderName: 'Hệ thống', 
+      content: 'ĐOÀNG! Tiếng súng chói tai vang lên, Xạ Thủ đã lộ diện và tiêu diệt ${target.name}!', 
+      isSystem: true, 
+      time: DateTime.now()
+    ));
+    
+    killPlayer(target, 'Xạ Thủ: Đã nổ súng bắn chết ${target.name}!');
+    selectedPlayer = null;
+    checkGameOver(); 
+    notifyListeners();
+  }
+
+  void executeHunterShot(OnlinePlayer target) {
+    hunterSkillTriggered = false; killPlayer(target, 'Thợ Săn: Đã bắn chết ${target.name}!');
+    checkGameOver(); notifyListeners();
+  }
+
+  String getActionInstructionText() {
+    if (hunterSkillTriggered) return 'CHỌN 1 NGƯỜI VÀ BẤM [BẮN KÉO THEO]!';
+    if (selectedPlayer == null) {
+      if (currentPhase == GamePhase.night) {
+        if (myPlayer!.role.id == 'cupid' && lover1 == null) return 'Chọn 2 người để Ghép đôi.';
+        return 'Thực hiện kỹ năng của bạn...';
+      }
+      return currentPhase == GamePhase.day ? 'Thảo luận sôi nổi (60s).' : 'Chạm người chơi để vote.';
+    }
+    return 'Mục tiêu: ${selectedPlayer!.name}';
+  }
+
+  String checkGameOver() {
+    if (currentState != PlayState.playing || players.isEmpty) return '';
+    int w = players.where((p) => p.isAlive && (p.role.team == RoleTeam.werewolf || p.id == cursedPlayerId)).length;
+    int g = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).length;
+    if (w == 0) { stopPeriodicBotChat(); _phaseTimer?.cancel(); return 'Phe Dân Làng giành chiến thắng!'; }
+    if (w >= g) { stopPeriodicBotChat(); _phaseTimer?.cancel(); return 'Phe Ma Sói giành chiến thắng!'; }
+    return '';
+  }
+
+  bool isMyWin(String msg) {
+    if (myPlayer == null) return false;
+    return (myPlayer!.role.team == RoleTeam.werewolf && msg.contains('Ma Sói')) || (myPlayer!.role.team != RoleTeam.werewolf && msg.contains('Dân Làng'));
+  }
+
+  void _simulateBotVotesGradually() {
+    final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
+    for (var b in bots) {
+      Timer(Duration(milliseconds: 500 + Random().nextInt(12000)), () {
+        if (currentPhase != GamePhase.voting || currentState != PlayState.playing) return;
+        final t = players.where((p) => p.isAlive && p.id != b.id).toList();
+        if (t.isNotEmpty) { t[Random().nextInt(t.length)].voteCount += (b.role.id == 'soi_dau_dan' ? 2 : 1); notifyListeners(); }
+      });
+    }
+  }
+
+  void simulateBotChatResponse(String msg) {
+    Timer(const Duration(milliseconds: 800), () {
+      final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
+      if (bots.isNotEmpty) { chatMessages.add(ChatMessage(senderName: bots[Random().nextInt(bots.length)].name, content: 'Bình tĩnh nha ae.', time: DateTime.now())); notifyListeners(); }
+    });
   }
 
   void startPeriodicBotChat() {
     botChatTimer?.cancel();
-    botChatTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
-      if (currentState == PlayState.playing && currentPhase == GamePhase.day) {
-        _simulateRandomBotChat();
-      }
-    });
+    botChatTimer = Timer.periodic(const Duration(seconds: 8), (t) => _simulateRandomBotChat());
   }
 
-  void stopPeriodicBotChat() {
-    botChatTimer?.cancel();
-  }
+  void stopPeriodicBotChat() => botChatTimer?.cancel();
 
   void _simulateRandomBotChat() {
-    final random = Random();
-    final aliveBots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
-    if (aliveBots.isEmpty) return;
-
-    final bot = aliveBots[random.nextInt(aliveBots.length)];
-    final suspects = players.where((p) => p.isAlive && p.id != bot.id).toList();
-
-    String content = '';
-    if (suspects.isNotEmpty) {
-      final target = suspects[random.nextInt(suspects.length)];
-      final templates = [
-        'Tui thấy nghi nghi P${target.id} nha.',
-        'P${target.id} nãy giờ im hơi lặng tiếng quá.',
-        'Mọi người nghĩ sao về P${target.id}?',
-        'Tiên tri soi P${target.id} chưa?',
-        'P${target.id} có phải dân không vậy?',
-        'Tui là dân nha ae, tin tui đi.',
-        'Đừng vote bừa, mất dân là thua đó.',
-        'Ai có thông tin gì thì nói đi chứ.',
-      ];
-      content = templates[random.nextInt(templates.length)];
-    }
-
-    chatMessages.add(ChatMessage(
-      senderName: bot.name,
-      content: content,
-      time: DateTime.now(),
-    ));
-    notifyListeners();
-  }
-
-  void simulateBotHunterShot(OnlinePlayer hunter) {
-    final random = Random();
-    List<OnlinePlayer> suspects = players.where((p) => p.isAlive && p.id != hunter.id).toList();
-    if (suspects.isNotEmpty) {
-      final victim = suspects[random.nextInt(suspects.length)];
-      killPlayer(victim, 'Thợ Săn: ${hunter.name} trước khi tử nạn đã kịp nổ súng kéo theo ${victim.name}! 🎯');
+    if (currentState != PlayState.playing || currentPhase != GamePhase.day) return;
+    final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
+    if (bots.isEmpty) return;
+    final b = bots[Random().nextInt(bots.length)];
+    final s = players.where((p) => p.isAlive && p.id != b.id).toList();
+    if (s.isNotEmpty) {
+      final t = s[Random().nextInt(s.length)];
+      final c = ['Nghi P${t.id} nha.', 'P${t.id} im quá.', 'Soi P${t.id} đi.', 'Tui dân mà!'][Random().nextInt(4)];
+      chatMessages.add(ChatMessage(senderName: b.name, content: c, time: DateTime.now()));
+      notifyListeners();
     }
   }
 
-  void addLog(String log) {
-    actionLogs.add(log);
+  void simulateWerewolfNightTarget() {
+    final v = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).toList();
+    if (v.isNotEmpty) werewolfTarget = v[Random().nextInt(v.length)];
     notifyListeners();
   }
 
-  @override
-  void dispose() {
-    _phaseTimer?.cancel();
-    botChatTimer?.cancel();
-    super.dispose();
+  void simulateBotHunterShot(OnlinePlayer h) {
+    final t = players.where((p) => p.isAlive && p.id != h.id).toList();
+    if (t.isNotEmpty) killPlayer(t[Random().nextInt(t.length)], 'Thợ Săn kéo theo 1 người!');
   }
+
+  void addLog(String log) { actionLogs.add(log); notifyListeners(); }
+  @override void dispose() { _phaseTimer?.cancel(); botChatTimer?.cancel(); super.dispose(); }
 }

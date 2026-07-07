@@ -11,6 +11,8 @@ class OnlinePlayer {
   bool isProtected;
   bool isPoisoned;
   bool isHost;
+  bool wasProtectedByBodyguard;
+  bool wasHealedByWitch;
 
   OnlinePlayer({
     required this.id,
@@ -23,5 +25,7 @@ class OnlinePlayer {
     this.isProtected = false,
     this.isPoisoned = false,
     this.isHost = false,
+    this.wasProtectedByBodyguard = false,
+    this.wasHealedByWitch = false,
   });
 }
