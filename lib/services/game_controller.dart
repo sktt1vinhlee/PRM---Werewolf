@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/enums.dart';
 import '../models/role_definition.dart';
 import '../models/online_player.dart';
@@ -8,7 +9,7 @@ import '../models/chat_message.dart';
 import 'language_service.dart';
 import 'firestore_service.dart';
 
-class GameController extends ChangeNotifier {
+class GameController extends ChangeNotifier with WidgetsBindingObserver {
   static final Set<String> activeRooms = {};
 
   PlayState currentState = PlayState.setup;
@@ -66,6 +67,7 @@ class GameController extends ChangeNotifier {
   ];
 
   GameController({String? initialRoomCode, String? initialUserName}) {
+    WidgetsBinding.instance.addObserver(this);
     if (initialUserName != null && initialUserName.isNotEmpty) {
       userName = initialUserName;
     }
@@ -81,25 +83,104 @@ class GameController extends ChangeNotifier {
     initializeLobbyChat();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached || state == AppLifecycleState.paused) {
+      // Khi thoát app hoặc xóa khỏi đa nhiệm, cố gắng báo thoát phòng
+      leaveRoom();
+    }
+  }
+
   void listenToRoom(String code) {
     _roomSubscription?.cancel();
     _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
       if (snapshot.exists) {
         final data = snapshot.data();
         if (data != null) {
+          final String status = data['status'] ?? 'waiting';
           final List playersData = data['players'] ?? [];
+          final List messagesData = data['messages'] ?? [];
+          
           lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
           playerCount = data['playerCount'] ?? playerCount;
+
+          // Cập nhật tin nhắn chat từ Firebase
+          chatMessages = messagesData.map((m) => ChatMessage(
+            senderName: m['senderName'],
+            content: m['content'],
+            isSystem: m['isSystem'] ?? false,
+            isWerewolfOnly: m['isWerewolfOnly'] ?? false,
+            isGhost: m['isGhost'] ?? false,
+            time: (m['time'] as Timestamp).toDate(),
+          )).toList();
+
+          if (status == 'playing' && currentState == PlayState.lobby) {
+            _handleGameStarted(playersData);
+          }
+          
           notifyListeners();
         }
       }
     });
   }
 
+  void _handleGameStarted(List playersData) {
+    // Chuyển đổi dữ liệu từ Firestore sang danh sách OnlinePlayer nội bộ
+    players = playersData.asMap().entries.map((entry) {
+      final i = entry.key;
+      final p = entry.value;
+      final roleId = p['roleId'] ?? 'dan';
+      final role = roleDefinitions.firstWhere((r) => r.id == roleId, orElse: () => roleDefinitions[0]);
+      
+      final player = OnlinePlayer(
+        id: i + 1,
+        name: p['name'],
+        role: role,
+        isHost: p['isHost'] ?? false,
+      );
+
+      if (p['name'] == userName) {
+        myPlayer = player;
+      }
+      return player;
+    }).toList();
+
+    currentState = PlayState.roleReveal;
+    notifyListeners();
+
+    // Tự động vào trận sau 5 giây hiển thị vai trò
+    Future.delayed(const Duration(seconds: 5), () {
+      if (currentState != PlayState.roleReveal) return;
+      currentState = PlayState.playing;
+      dayNumber = 1;
+      currentPhase = GamePhase.night;
+      hasHealPotion = true;
+      hasPoisonPotion = true;
+      werewolfTarget = null;
+      xathuBullets = 2;
+      xathuRevealed = false;
+      addLog('${langSvc.t('system')}: ${langSvc.t('match_started')}');
+      
+      if (myPlayer?.role.team == RoleTeam.werewolf) {
+        chatMessages.add(ChatMessage(
+          senderName: langSvc.t('system'),
+          content: langSvc.t('wolf_chat_open'),
+          isSystem: true,
+          isWerewolfOnly: true,
+          time: DateTime.now()
+        ));
+      }
+      
+      simulateWerewolfNightTarget();
+      startPhaseTimer(15);
+      notifyListeners();
+    });
+  }
+
   void generateRoomCode() {
     final random = Random();
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    roomCode = 'WS-${List.generate(6, (index) => chars[random.nextInt(chars.length)]).join()}';
+    roomCode = List.generate(6, (index) => chars[random.nextInt(chars.length)]).join();
   }
 
   Future<void> createRoom() async {
@@ -130,6 +211,14 @@ class GameController extends ChangeNotifier {
     }
   }
 
+  Future<void> leaveRoom() async {
+    if (roomCode.isNotEmpty) {
+      _roomSubscription?.cancel();
+      await firestoreSvc.leaveRoom(roomCode, userName);
+      roomCode = '';
+    }
+  }
+
   void startLobbyTransition() {
     isLobbyLoading = true;
     notifyListeners();
@@ -144,7 +233,55 @@ class GameController extends ChangeNotifier {
   }
 
   void startGame() {
-    initializeOnlineGame();
+    final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+    if (!isHost) return;
+
+    // 1. Chỉ lấy danh sách người chơi thật đang có trong phòng
+    final actualPlayerCount = lobbyPlayerNames.length;
+    if (actualPlayerCount < 1) {
+      // Có thể thêm thông báo tối thiểu 4 người để chơi
+      debugPrint('Cần ít nhất 4 người để bắt đầu game');
+    }
+
+    final random = Random();
+    List<String> finalNames = List.from(lobbyPlayerNames);
+
+    // 2. Phân vai trò dựa trên số lượng người chơi thực tế
+    List<RoleDefinition> roles = [];
+    int targetWolves = max(1, (actualPlayerCount / 4).round());
+    List<RoleDefinition> wolfPool = [];
+    
+    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
+    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
+    while (wolfPool.length < targetWolves) {
+      wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
+    }
+    
+    roles.addAll(wolfPool);
+    List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
+    roles.addAll(specials.take(min(specials.length, actualPlayerCount - roles.length)));
+    
+    while (roles.length < actualPlayerCount) roles.add(roleDefinitions.firstWhere((r) => r.id == 'dan'));
+    roles.shuffle(random);
+
+    // 3. Tạo dữ liệu người chơi để bắn lên Firebase
+    List<Map<String, dynamic>> playersWithRoles = [];
+    for (int i = 0; i < actualPlayerCount; i++) {
+      playersWithRoles.add({
+        'name': finalNames[i],
+        'roleId': roles[i].id,
+        'isHost': i == 0,
+        'isReady': true,
+        'isBot': false, // Không tạo thêm bot
+      });
+    }
+
+    // 4. Cập nhật Firestore (Cập nhật cả playerCount thực tế)
+    firestoreSvc.startGame(roomCode, playersWithRoles);
+    // Cập nhật lại số lượng người chơi thực tế trên document phòng
+    FirebaseFirestore.instance.collection('rooms').doc(roomCode).update({
+      'playerCount': actualPlayerCount
+    });
   }
 
   void resetGame() {
@@ -218,16 +355,20 @@ class GameController extends ChangeNotifier {
 
   void sendUserMessage(String text) {
     if (text.trim().isEmpty) return;
+    
     final isWolfChannel = currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf;
-    chatMessages.add(ChatMessage(
-      senderName: '$userName (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})',
-      content: text,
-      isWerewolfOnly: isWolfChannel,
-      isGhost: !myPlayer!.isAlive,
-      time: DateTime.now(),
-    ));
-    simulateBotChatResponse(text);
-    notifyListeners();
+    final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
+    
+    final messageData = {
+      'senderName': userName,
+      'content': text,
+      'isWerewolfOnly': isWolfChannel,
+      'isGhost': isGhost,
+      'isSystem': false,
+      'time': Timestamp.now(),
+    };
+
+    firestoreSvc.sendChatMessage(roomCode, messageData);
   }
 
   bool isChatDisabled() {
@@ -239,7 +380,7 @@ class GameController extends ChangeNotifier {
   String getChatHintText() {
     if (currentState != PlayState.playing) return langSvc.t('chat_hint');
     if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf ? langSvc.t('chat_night_disabled') : langSvc.t('chat_wolf_hint');
-    if (!myPlayer!.isAlive) return langSvc.t('chat_ghost_hint');
+    if (myPlayer != null && !myPlayer!.isAlive) return langSvc.t('chat_ghost_hint');
     return langSvc.t('chat_hint');
   }
 
@@ -252,9 +393,13 @@ class GameController extends ChangeNotifier {
         notifyListeners();
       } else {
         timer.cancel();
-        if (currentPhase == GamePhase.night) transitionToDay();
-        else if (currentPhase == GamePhase.day) transitionToVoting();
-        else transitionToNight();
+        if (currentPhase == GamePhase.night) {
+          transitionToDay();
+        } else if (currentPhase == GamePhase.day) {
+          transitionToVoting();
+        } else {
+          transitionToNight();
+        }
       }
     });
   }
@@ -269,7 +414,11 @@ class GameController extends ChangeNotifier {
       else if (p.voteCount == maxV && maxV > 0 && Random().nextBool()) finalVictim = p;
     }
     if (finalVictim != null && !finalVictim.isProtected) killPlayer(finalVictim, langSvc.t('night_casualty').replaceFirst('%s', finalVictim.name));
-    for (var p in players) if (p.isPoisoned && p.isAlive) killPlayer(p, langSvc.t('poison_casualty').replaceFirst('%s', p.name));
+    for (var p in players) {
+      if (p.isPoisoned && p.isAlive) {
+        killPlayer(p, langSvc.t('poison_casualty').replaceFirst('%s', p.name));
+      }
+    }
     
     // Hồi sinh người chơi được Phù Thủy cứu (hiệu lực khi trời sáng)
     if (witchReviveTargetId != null) {
@@ -322,39 +471,6 @@ class GameController extends ChangeNotifier {
     for (var p in players) if (p.isTargeted) { p.voteCount -= weight; p.isTargeted = false; }
     target.voteCount += weight; target.isTargeted = true;
     notifyListeners();
-  }
-
-  void initializeOnlineGame() {
-    final random = Random(); List<RoleDefinition> roles = [];
-    int targetWolves = max(1, (playerCount / 4).round());
-    List<RoleDefinition> wolfPool = [];
-    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
-    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
-    while (wolfPool.length < targetWolves) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
-    roles.addAll(wolfPool);
-    List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
-    roles.addAll(specials.take(min(specials.length, playerCount - roles.length)));
-    while (roles.length < playerCount) roles.add(roleDefinitions.firstWhere((r) => r.id == 'dan'));
-    roles.shuffle(random);
-    final names = ['Minh Đức', 'Khánh Linh', 'Tuấn Tú', 'Hoài Thu', 'Gia Bảo', 'Quỳnh Anh', 'Nhật Minh', 'Phương Thảo', 'Thanh Lâm', 'Mai Chi', 'Trí Dũng', 'Ngọc Diệp'];
-    int myIdx = random.nextInt(playerCount);
-    players = List.generate(playerCount, (i) => OnlinePlayer(id: i + 1, name: i == myIdx ? '$userName (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})' : names[i % names.length], role: roles[i], isHost: i == 0));
-    myPlayer = players[myIdx];
-    currentState = PlayState.roleReveal;
-    isLobbyLoading = false;
-    notifyListeners();
-    Future.delayed(const Duration(seconds: 5), () {
-      if (currentState != PlayState.roleReveal) return;
-      currentState = PlayState.playing; dayNumber = 1; currentPhase = GamePhase.night;
-      hasHealPotion = true; hasPoisonPotion = true; werewolfTarget = null;
-      xathuBullets = 2; xathuRevealed = false;
-      addLog('${langSvc.t('system')}: ${langSvc.t('match_started')}');
-      if (myPlayer!.role.team == RoleTeam.werewolf) {
-        chatMessages.add(ChatMessage(senderName: langSvc.t('system'), content: langSvc.t('wolf_chat_open'), isSystem: true, isWerewolfOnly: true, time: DateTime.now()));
-      }
-      simulateWerewolfNightTarget(); startPhaseTimer(15);
-      notifyListeners();
-    });
   }
 
   void killPlayer(OnlinePlayer player, String reason) {
@@ -483,7 +599,10 @@ class GameController extends ChangeNotifier {
 
   String checkGameOver() {
     if (currentState != PlayState.playing || players.isEmpty) return '';
-    if (isNerdHanged) return langSvc.t('role_nerd') + ' ' + (langSvc.currentLanguage == AppLanguage.vi ? 'đã thắng!' : 'has won!');
+    if (isNerdHanged) {
+      final winMsg = langSvc.currentLanguage == AppLanguage.vi ? 'đã thắng!' : 'has won!';
+      return '${langSvc.t('role_nerd')} $winMsg';
+    }
     int w = players.where((p) => p.isAlive && (p.role.team == RoleTeam.werewolf || p.id == cursedPlayerId)).length;
     int g = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).length;
     if (w == 0) return (langSvc.currentLanguage == AppLanguage.vi ? 'Phe Dân Làng giành chiến thắng!' : 'Villagers won!');
@@ -561,6 +680,7 @@ class GameController extends ChangeNotifier {
 
   void addLog(String log) { actionLogs.add(log); notifyListeners(); }
   @override void dispose() { 
+    WidgetsBinding.instance.removeObserver(this);
     _phaseTimer?.cancel(); 
     botChatTimer?.cancel(); 
     _roomSubscription?.cancel();

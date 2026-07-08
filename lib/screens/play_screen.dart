@@ -73,9 +73,13 @@ class _PlayScreenState extends State<PlayScreen> {
         content: Text(message, style: const TextStyle(color: Colors.white70, fontSize: 14)),
         actions: [
           ElevatedButton(
-            onPressed: () { 
+            onPressed: () async { 
               setState(() => _isGameOverDialogShowing = false); 
-              Navigator.of(context).popUntil((route) => route.isFirst);
+              await _controller.leaveRoom();
+              if (mounted) {
+                final nav = Navigator.of(context);
+                nav.popUntil((route) => route.isFirst);
+              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD54F), foregroundColor: Colors.black),
             child: Text(langSvc.t('back_to_menu'), style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -86,22 +90,28 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Future<bool> _onWillPop() async {
+    bool shouldPop = false;
     if (_controller.currentState == PlayState.setup || _controller.currentState == PlayState.lobby) {
-      return true;
+      shouldPop = true;
+    } else {
+      shouldPop = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          title: Text('${langSvc.t('exit_room')}?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          content: Text(langSvc.t('developing'), style: const TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(langSvc.t('cancel'), style: const TextStyle(color: Colors.white60))),
+            ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC62828)), child: Text(langSvc.t('exit_room'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+          ],
+        ),
+      ) ?? false;
     }
-    final shouldPop = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: Text(langSvc.t('exit_room') + '?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: Text(langSvc.t('developing'), style: const TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(langSvc.t('cancel'), style: const TextStyle(color: Colors.white60))),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC62828)), child: Text(langSvc.t('exit_room'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-    return shouldPop ?? false;
+
+    if (shouldPop) {
+      await _controller.leaveRoom();
+    }
+    return shouldPop;
   }
 
   @override
@@ -404,7 +414,19 @@ class _PlayScreenState extends State<PlayScreen> {
     return Column(children: [
       _buildOnlinePlayTopBar(),
       _buildOnlinePhaseHeader(),
-      Expanded(child: GridView.builder(padding: const EdgeInsets.all(12), itemCount: _controller.playerCount, gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 0.8), itemBuilder: (c, i) => _buildPlayerOnlineCard(_controller.players[i]))),
+      Expanded(
+        child: GridView.builder(
+          padding: const EdgeInsets.all(12), 
+          itemCount: _controller.players.length, 
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3, 
+            crossAxisSpacing: 8, 
+            mainAxisSpacing: 8, 
+            childAspectRatio: 0.8
+          ), 
+          itemBuilder: (c, i) => _buildPlayerOnlineCard(_controller.players[i])
+        )
+      ),
       _buildChatLogTabs(),
     ]);
   }
@@ -548,7 +570,8 @@ class _PlayScreenState extends State<PlayScreen> {
   Widget _miniIcon(IconData icon, Color clr) => Container(padding: const EdgeInsets.all(2), decoration: BoxDecoration(color: clr, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 1), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 2, spreadRadius: 1)]), child: Icon(icon, color: Colors.white, size: 12));
 
   Widget _buildChatLogTabs() {
-    final isWolf = _controller.myPlayer?.role.team == RoleTeam.werewolf;
+    final my = _controller.myPlayer;
+    final isWolf = my?.role.team == RoleTeam.werewolf;
     final isLobby = _controller.currentState == PlayState.lobby;
     final isNight = _controller.currentPhase == GamePhase.night;
     final isDark = isLobby || isNight;
@@ -567,10 +590,10 @@ class _PlayScreenState extends State<PlayScreen> {
       const Divider(color: Color(0xFF334155), height: 1),
       Container(height: 120, padding: const EdgeInsets.all(8), child: _showChatTab ? ListView.builder(itemCount: _controller.chatMessages.length, itemBuilder: (c, i) {
         final msg = _controller.chatMessages[i]; 
-        if (msg.isWerewolfOnly && !isWolf) {
+        if (msg.isWerewolfOnly && !(isWolf ?? false)) {
           return const SizedBox.shrink();
         } 
-        if (msg.isGhost && _controller.myPlayer?.isAlive == true) {
+        if (msg.isGhost && my?.isAlive == true) {
           return const SizedBox.shrink();
         }
         return _buildChatMessageTile(msg);
@@ -587,12 +610,14 @@ class _PlayScreenState extends State<PlayScreen> {
     final isLobby = _controller.currentState == PlayState.lobby;
     final isNight = _controller.currentPhase == GamePhase.night;
     final isDark = isLobby || isNight;
+    final isMe = msg.senderName == _controller.userName;
+    final displayName = isMe ? '${msg.senderName} (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})' : msg.senderName;
     
-    Color clr = msg.isSystem ? (isDark ? const Color(0xFFFFD54F) : const Color(0xFFB45309)) : (msg.isWerewolfOnly ? Colors.red : (msg.isGhost ? Colors.grey : (msg.senderName.contains('(Bạn)') ? (isDark ? Colors.green : const Color(0xFF15803D)) : (isDark ? Colors.white70 : const Color(0xFF0F172A)))));
+    Color clr = msg.isSystem ? (isDark ? const Color(0xFFFFD54F) : const Color(0xFFB45309)) : (msg.isWerewolfOnly ? Colors.red : (msg.isGhost ? Colors.grey : (isMe ? (isDark ? Colors.green : const Color(0xFF15803D)) : (isDark ? Colors.white70 : const Color(0xFF0F172A)))));
     return Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: RichText(text: TextSpan(children: [
       if (msg.isWerewolfOnly) const TextSpan(text: '[SÓI] ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 11)),
       if (msg.isGhost) const TextSpan(text: '[MA 👻] ', style: TextStyle(color: Colors.grey, fontSize: 11)),
-      TextSpan(text: '${msg.senderName}: ', style: TextStyle(color: clr, fontWeight: FontWeight.bold, fontSize: 11.5)),
+      TextSpan(text: '$displayName: ', style: TextStyle(color: clr, fontWeight: FontWeight.bold, fontSize: 11.5)),
       TextSpan(text: msg.content, style: TextStyle(color: msg.isGhost ? Colors.grey : (isDark ? Colors.white70 : const Color(0xFF334155)), fontSize: 11.5)),
     ])));
   }
@@ -615,7 +640,21 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildTopBar(String title, {bool showInfo = false}) {
-    return Padding(padding: const EdgeInsets.all(8), child: Row(children: [IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white)), Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center)), showInfo ? IconButton(onPressed: _showOnlineRulesDialog, icon: const Icon(Icons.info_outline, color: Color(0xFFFFD54F))) : const SizedBox(width: 48)]));
+    return Padding(
+      padding: const EdgeInsets.all(8), 
+      child: Row(children: [
+        IconButton(
+          onPressed: () async {
+            if (await _onWillPop() && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          }, 
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white)
+        ), 
+        Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center)), 
+        showInfo ? IconButton(onPressed: _showOnlineRulesDialog, icon: const Icon(Icons.info_outline, color: Color(0xFFFFD54F))) : const SizedBox(width: 48)
+      ])
+    );
   }
 
   void _showOnlineRulesDialog() {
@@ -627,8 +666,9 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildBottomOnlineController() {
-    if (_controller.myPlayer == null) return const SizedBox.shrink();
-    final isDead = !_controller.myPlayer!.isAlive;
+    final my = _controller.myPlayer;
+    if (my == null) return const SizedBox.shrink();
+    final isDead = !my.isAlive;
     final isHunterTriggered = _controller.hunterSkillTriggered;
     final isNight = _controller.currentPhase == GamePhase.night; 
     
@@ -667,8 +707,10 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildSkillActionButton() {
-    final target = _controller.selectedPlayer!; 
-    final my = _controller.myPlayer!; 
+    final target = _controller.selectedPlayer; 
+    final my = _controller.myPlayer; 
+    if (target == null || my == null) return const SizedBox.shrink();
+
     final isNight = _controller.currentPhase == GamePhase.night;
     
     if (_controller.hunterSkillTriggered) {
@@ -682,7 +724,13 @@ class _PlayScreenState extends State<PlayScreen> {
         final sel = _controller.cupidSelections.any((p) => p.id == target.id);
         if (_controller.cupidSelections.length < 2 || sel) {
           return Row(children: [
-            Expanded(child: ElevatedButton(onPressed: () => setState(() { if (sel) _controller.cupidSelections.removeWhere((p) => p.id == target.id); else _controller.cupidSelections.add(target); }), style: ElevatedButton.styleFrom(backgroundColor: sel ? Colors.grey : Colors.pink[300]), child: FittedBox(child: Text(sel ? langSvc.t('action_unselect') : '${langSvc.t('join')} (${_controller.cupidSelections.length}/2)', style: const TextStyle(color: Colors.white))))),
+            Expanded(child: ElevatedButton(onPressed: () => setState(() { 
+              if (sel) {
+                _controller.cupidSelections.removeWhere((p) => p.id == target.id); 
+              } else {
+                _controller.cupidSelections.add(target); 
+              }
+            }), style: ElevatedButton.styleFrom(backgroundColor: sel ? Colors.grey : Colors.pink[300]), child: FittedBox(child: Text(sel ? langSvc.t('action_unselect') : '${langSvc.t('join')} (${_controller.cupidSelections.length}/2)', style: const TextStyle(color: Colors.white))))),
           ]);
         }
         return Row(children: [
