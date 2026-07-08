@@ -38,7 +38,8 @@ dependencies:
   # [THÊM MỚI] BỘ THƯ VIỆN FIREBASE CHO CHỨC NĂNG BACKEND & DATABASE
   firebase_core: ^3.9.0      # Bắt buộc: Lõi kết nối Firebase
   cloud_firestore: ^5.6.0    # Bắt buộc: Database NoSQL thời gian thực
-  firebase_auth: ^5.4.0      # Bắt buộc: Đăng nhập ẩn danh để cấp UID cho người chơi
+  firebase_auth: ^5.4.0      # Bắt buộc: Đăng nhập ẩn danh
+  firebase_database: ^11.1.0 # Bổ sung: Realtime Database cho Game
 
 dev_dependencies:
   flutter_test:

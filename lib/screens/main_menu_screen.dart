@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/game_controller.dart';
 import '../services/language_service.dart';
+import '../services/firestore_service.dart';
 import 'play_screen.dart';
 
 class MainMenuScreen extends StatelessWidget {
@@ -73,7 +75,18 @@ class MainMenuScreen extends StatelessWidget {
             children: [
               _topIconButton(Icons.settings, onPressed: () => _showLanguageDialog(context)),
               const SizedBox(width: 12),
-              _topIconButton(Icons.people),
+              _topIconButton(Icons.people, onPressed: () {
+                FirebaseFirestore.instance.collection('test_thu_nghiem').add({
+                  'loi_nhan': 'Hello Firebase, app Ma Sói đã kết nối thành công!',
+                  'thoi_gian': DateTime.now().toString(),
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Đã bắn data test lên Firebase!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }),
             ],
           ),
         ],
@@ -204,7 +217,8 @@ class MainMenuScreen extends StatelessWidget {
   }
 
   void _showJoinRoomDialog(BuildContext context) {
-    final controller = TextEditingController();
+    final nameController = TextEditingController();
+    final codeController = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -214,9 +228,19 @@ class MainMenuScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(langSvc.t('your_name'), style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             TextField(
-              controller: controller,
-              autofocus: true,
+              controller: nameController,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              decoration: const InputDecoration(
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4FC3F7))),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(langSvc.t('room_code_label'), style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+            TextField(
+              controller: codeController,
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               decoration: InputDecoration(
                 hintText: langSvc.t('room_code_hint'),
@@ -230,19 +254,27 @@ class MainMenuScreen extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text(langSvc.t('cancel'), style: const TextStyle(color: Colors.white60))),
           ElevatedButton(
-            onPressed: () {
-              final code = controller.text.trim().toUpperCase();
-              if (code.isNotEmpty) {
-                if (GameController.activeRooms.contains(code)) {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => PlayScreen(roomCode: code)));
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final code = codeController.text.trim().toUpperCase();
+              if (name.isNotEmpty && code.isNotEmpty) {
+                // Hiển thị loading nhẹ hoặc vô hiệu hóa nút
+                final exists = await firestoreSvc.checkRoomExists(code);
+                if (exists) {
+                  await firestoreSvc.joinRoom(code, name);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (context) => PlayScreen(roomCode: code, userName: name)));
+                  }
                 } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(langSvc.t('room_not_found')),
-                      backgroundColor: Colors.redAccent,
-                    ),
-                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(langSvc.t('room_not_found')),
+                        backgroundColor: Colors.redAccent,
+                      ),
+                    );
+                  }
                 }
               }
             },

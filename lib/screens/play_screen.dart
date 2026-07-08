@@ -9,8 +9,9 @@ import '../services/language_service.dart';
 
 class PlayScreen extends StatefulWidget {
   final String? roomCode;
+  final String? userName;
   final bool isQuickMatch;
-  const PlayScreen({super.key, this.roomCode, this.isQuickMatch = false});
+  const PlayScreen({super.key, this.roomCode, this.userName, this.isQuickMatch = false});
 
   @override
   State<PlayScreen> createState() => _PlayScreenState();
@@ -25,7 +26,10 @@ class _PlayScreenState extends State<PlayScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = GameController(initialRoomCode: widget.roomCode);
+    _controller = GameController(
+      initialRoomCode: widget.roomCode,
+      initialUserName: widget.userName,
+    );
     _controller.addListener(_onControllerUpdate);
     
     if (widget.isQuickMatch) {

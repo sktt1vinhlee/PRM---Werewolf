@@ -6,9 +6,10 @@ import '../models/role_definition.dart';
 import '../models/online_player.dart';
 import '../models/chat_message.dart';
 import 'language_service.dart';
+import 'firestore_service.dart';
 
 class GameController extends ChangeNotifier {
-  static final Set<String> activeRooms = {}; 
+  static final Set<String> activeRooms = {};
 
   PlayState currentState = PlayState.setup;
   GamePhase currentPhase = GamePhase.night;
@@ -28,6 +29,7 @@ class GameController extends ChangeNotifier {
   int phaseTimerSeconds = 0;
   Timer? _phaseTimer;
   Timer? botChatTimer;
+  StreamSubscription? _roomSubscription;
 
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
@@ -63,11 +65,14 @@ class GameController extends ChangeNotifier {
     RoleDefinition(id: 'nerd', name: 'role_nerd', description: 'role_nerd_desc', team: RoleTeam.neutral, icon: Icons.psychology, primaryColor: const Color(0xFF9E9D24), secondaryColor: const Color(0xFFD4E157), isUnique: true),
   ];
 
-  GameController({String? initialRoomCode}) {
+  GameController({String? initialRoomCode, String? initialUserName}) {
+    if (initialUserName != null && initialUserName.isNotEmpty) {
+      userName = initialUserName;
+    }
     if (initialRoomCode != null) {
       roomCode = initialRoomCode;
       currentState = PlayState.lobby;
-      lobbyPlayerNames = [langSvc.t('host'), userName];
+      listenToRoom(roomCode);
     } else {
       generateRoomCode();
       currentState = PlayState.setup;
@@ -76,16 +81,53 @@ class GameController extends ChangeNotifier {
     initializeLobbyChat();
   }
 
+  void listenToRoom(String code) {
+    _roomSubscription?.cancel();
+    _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
+      if (snapshot.exists) {
+        final data = snapshot.data();
+        if (data != null) {
+          final List playersData = data['players'] ?? [];
+          lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
+          playerCount = data['playerCount'] ?? playerCount;
+          notifyListeners();
+        }
+      }
+    });
+  }
+
   void generateRoomCode() {
     final random = Random();
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     roomCode = 'WS-${List.generate(6, (index) => chars[random.nextInt(chars.length)]).join()}';
   }
 
-  void createRoom() {
-    currentState = PlayState.lobby;
-    activeRooms.add(roomCode);
-    notifyListeners();
+  Future<void> createRoom() async {
+    try {
+      // Bắn data lên Firebase trước
+      await firestoreSvc.createRoom(roomCode, userName, playerCount);
+      
+      // Sau đó cập nhật state local và lắng nghe
+      currentState = PlayState.lobby;
+      listenToRoom(roomCode);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to create room on Firebase: $e');
+    }
+  }
+
+  Future<void> joinExistingRoom(String code, String name) async {
+    try {
+      await firestoreSvc.joinRoom(code, name);
+      roomCode = code;
+      userName = name;
+      currentState = PlayState.lobby;
+      listenToRoom(roomCode);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to join room on Firebase: $e');
+      rethrow;
+    }
   }
 
   void startLobbyTransition() {
@@ -343,13 +385,13 @@ class GameController extends ChangeNotifier {
   }
 
   void executeWitchHeal(OnlinePlayer target) {
-    if (target.role.team != RoleTeam.villager) { 
-      addLog('${langSvc.t('system')}: Bình cứu không có tác dụng với phe khác!'); 
-      selectedPlayer = null; 
-      notifyListeners(); 
-      return; 
+    if (target.role.team != RoleTeam.villager) {
+      addLog('${langSvc.t('system')}: Bình cứu không có tác dụng với phe khác!');
+      selectedPlayer = null;
+      notifyListeners();
+      return;
     }
-    
+
     if (target.isAlive) {
       // Bảo vệ người sắp bị cắn (có hiệu lực ngay để chặn cái chết lúc bình minh)
       target.isProtected = true;
@@ -361,7 +403,7 @@ class GameController extends ChangeNotifier {
       target.wasHealedByWitch = true;
       addLog(langSvc.t('witch_revive_log').replaceFirst('%s', target.name));
     }
-    
+
     hasHealPotion = false;
     hasUsedHealThisNight = true;
     selectedPlayer = null;
@@ -518,5 +560,10 @@ class GameController extends ChangeNotifier {
   }
 
   void addLog(String log) { actionLogs.add(log); notifyListeners(); }
-  @override void dispose() { _phaseTimer?.cancel(); botChatTimer?.cancel(); super.dispose(); }
+  @override void dispose() { 
+    _phaseTimer?.cancel(); 
+    botChatTimer?.cancel(); 
+    _roomSubscription?.cancel();
+    super.dispose(); 
+  }
 }

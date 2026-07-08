@@ -4,11 +4,17 @@ import 'firebase_options.dart';
 import 'package:werewolf/screens/main_menu_screen.dart';
 
 void main() async {
+  // Bắt buộc phải có để khởi tạo Firebase
   WidgetsFlutterBinding.ensureInitialized();
   
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    debugPrint('Firebase initialized successfully');
+  } catch (e) {
+    debugPrint('Failed to initialize Firebase: $e');
+  }
 
   runApp(const WerewolfApp());
 }
@@ -19,10 +25,10 @@ class WerewolfApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ma Sói',
+      title: 'Ma Sói Online',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF81D4FA)),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4FC3F7)),
         useMaterial3: true,
       ),
       home: const MainMenuScreen(),
