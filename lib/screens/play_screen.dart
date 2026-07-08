@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/enums.dart';
 import '../models/role_definition.dart';
 import '../models/online_player.dart';
@@ -199,14 +200,37 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildRoomCodeCard() {
-    return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white30)), child: Row(children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(langSvc.t('room_code_label'), style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-        FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(_controller.roomCode, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
-      ])),
-      const SizedBox(width: 12),
-      const Icon(Icons.copy, color: Colors.white70, size: 20),
-    ]));
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: _controller.roomCode));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${langSvc.t('room_code_label')} ${_controller.roomCode} ${langSvc.currentLanguage == AppLanguage.vi ? "đã được sao chép!" : "copied to clipboard!"}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFF0288D1),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16), 
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2), 
+          borderRadius: BorderRadius.circular(16), 
+          border: Border.all(color: Colors.white30)
+        ), 
+        child: Row(
+          children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(langSvc.t('room_code_label'), style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(_controller.roomCode, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
+            ])),
+            const SizedBox(width: 12),
+            const Icon(Icons.copy, color: Colors.white70, size: 20),
+          ]
+        )
+      ),
+    );
   }
 
   Widget _buildUserProfileCard() {

@@ -85,8 +85,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached || state == AppLifecycleState.paused) {
-      // Khi thoát app hoặc xóa khỏi đa nhiệm, cố gắng báo thoát phòng
+    if (state == AppLifecycleState.detached) {
+      // Chỉ báo thoát phòng khi ứng dụng thực sự bị đóng/hủy hoàn toàn
       leaveRoom();
     }
   }
