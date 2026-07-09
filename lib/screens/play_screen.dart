@@ -51,6 +51,14 @@ class _PlayScreenState extends State<PlayScreen> {
       _isGameOverDialogShowing = true;
       _showGameOverDialog(_controller.isMyWin(gameOverMsg), gameOverMsg);
     }
+    
+    // Tự động thoát nếu phòng bị giải tán
+    if (_controller.roomCode.isEmpty && 
+        _controller.currentState == PlayState.setup && 
+        mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+
     if (mounted) {
       setState(() {});
       _autoScrollIfNeeded();

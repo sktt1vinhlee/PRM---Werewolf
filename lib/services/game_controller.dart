@@ -175,76 +175,91 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void listenToRoom(String code) {
     _roomSubscription?.cancel();
     _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
-      if (snapshot.exists) {
-        final data = snapshot.data();
-        if (data != null) {
-          final String status = data['status'] ?? 'waiting';
-          final List playersData = data['players'] ?? [];
-          final List messagesData = data['messages'] ?? [];
-          final List? statusData = data['playerStatuses'];
-          
-          lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
-          playerCount = data['playerCount'] ?? playerCount;
-          dayNumber = data['dayNumber'] ?? dayNumber;
-          cursedPlayerId = data['cursedPlayerId'];
-          
-          if (data['werewolfTargetId'] != null) {
-            werewolfTarget = players.firstWhere((p) => p.id == data['werewolfTargetId'], orElse: () => players[0]);
-          } else {
-            werewolfTarget = null;
-          }
-
-          if (data['lover1Id'] != null && data['lover2Id'] != null) {
-            lover1 = players.firstWhere((p) => p.id == data['lover1Id'], orElse: () => players[0]);
-            lover2 = players.firstWhere((p) => p.id == data['lover2Id'], orElse: () => players[0]);
-          }
-
-          if (data['currentPhase'] != null) {
-            currentPhase = GamePhase.values.firstWhere(
-              (e) => e.name == data['currentPhase'], 
-              orElse: () => currentPhase
-            );
-          }
-
-          // Cập nhật trạng thái người chơi
-          if (statusData != null && players.isNotEmpty) {
-            for (var s in statusData) {
-              final p = players.firstWhere((player) => player.id == s['id'], orElse: () => players[0]);
-              p.isAlive = s['isAlive'] ?? p.isAlive;
-              p.voteCount = s['voteCount'] ?? p.voteCount;
-              p.isTargeted = s['isTargeted'] ?? p.isTargeted;
-              p.isProtected = s['isProtected'] ?? p.isProtected;
-              p.isPoisoned = s['isPoisoned'] ?? p.isPoisoned;
-              p.wasProtectedByBodyguard = s['wasProtectedByBodyguard'] ?? p.wasProtectedByBodyguard;
-              p.wasHealedByWitch = s['wasHealedByWitch'] ?? p.wasHealedByWitch;
-              p.hasBeenScannedBySeer = s['hasBeenScannedBySeer'] ?? p.hasBeenScannedBySeer;
-            }
-          }
-
-          // Cập nhật tin nhắn chat từ Firebase
-          chatMessages = messagesData.map((m) => ChatMessage(
-            senderName: m['senderName'],
-            content: m['content'],
-            isSystem: m['isSystem'] ?? false,
-            isWerewolfOnly: m['isWerewolfOnly'] ?? false,
-            isGhost: m['isGhost'] ?? false,
-            time: (m['time'] as Timestamp).toDate(),
-          )).toList();
-
-          if (status == 'playing' && currentState == PlayState.lobby) {
-            _handleGameStarted(playersData);
-          }
-
-          // Tự động bắt đầu nếu đủ 15 người (Dùng người chơi đầu tiên trong danh sách làm người khởi tạo)
-          final isFirstPlayer = playersData.isNotEmpty && playersData[0]['name'] == userName;
-          if (isFirstPlayer && status == 'waiting' && playersData.length >= 15 && roomCode.isNotEmpty) {
-            startGame();
-          }
-          
-          notifyListeners();
+      if (!snapshot.exists) {
+        _handleRoomDeleted();
+        return;
+      }
+      
+      final data = snapshot.data();
+      if (data != null) {
+        final String status = data['status'] ?? 'waiting';
+        final List playersData = data['players'] ?? [];
+        final List messagesData = data['messages'] ?? [];
+        final List? statusData = data['playerStatuses'];
+        
+        lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
+        playerCount = data['playerCount'] ?? playerCount;
+        dayNumber = data['dayNumber'] ?? dayNumber;
+        cursedPlayerId = data['cursedPlayerId'];
+        
+        if (data['werewolfTargetId'] != null) {
+          werewolfTarget = players.firstWhere((p) => p.id == data['werewolfTargetId'], orElse: () => players[0]);
+        } else {
+          werewolfTarget = null;
         }
+
+        if (data['lover1Id'] != null && data['lover2Id'] != null) {
+          lover1 = players.firstWhere((p) => p.id == data['lover1Id'], orElse: () => players[0]);
+          lover2 = players.firstWhere((p) => p.id == data['lover2Id'], orElse: () => players[0]);
+        }
+
+        if (data['currentPhase'] != null) {
+          currentPhase = GamePhase.values.firstWhere(
+            (e) => e.name == data['currentPhase'], 
+            orElse: () => currentPhase
+          );
+        }
+
+        // Cập nhật trạng thái người chơi
+        if (statusData != null && players.isNotEmpty) {
+          for (var s in statusData) {
+            final p = players.firstWhere((player) => player.id == s['id'], orElse: () => players[0]);
+            p.isAlive = s['isAlive'] ?? p.isAlive;
+            p.voteCount = s['voteCount'] ?? p.voteCount;
+            p.isTargeted = s['isTargeted'] ?? p.isTargeted;
+            p.isProtected = s['isProtected'] ?? p.isProtected;
+            p.isPoisoned = s['isPoisoned'] ?? p.isPoisoned;
+            p.wasProtectedByBodyguard = s['wasProtectedByBodyguard'] ?? p.wasProtectedByBodyguard;
+            p.wasHealedByWitch = s['wasHealedByWitch'] ?? p.wasHealedByWitch;
+            p.hasBeenScannedBySeer = s['hasBeenScannedBySeer'] ?? p.hasBeenScannedBySeer;
+          }
+        }
+
+        // Cập nhật tin nhắn chat từ Firebase
+        chatMessages = messagesData.map((m) => ChatMessage(
+          senderName: m['senderName'],
+          content: m['content'],
+          isSystem: m['isSystem'] ?? false,
+          isWerewolfOnly: m['isWerewolfOnly'] ?? false,
+          isGhost: m['isGhost'] ?? false,
+          time: (m['time'] as Timestamp).toDate(),
+        )).toList();
+
+        if (status == 'playing' && currentState == PlayState.lobby) {
+          _handleGameStarted(playersData);
+        }
+
+        // Tự động bắt đầu nếu đủ 15 người (Dùng người chơi đầu tiên trong danh sách làm người khởi tạo)
+        final isFirstPlayer = playersData.isNotEmpty && playersData[0]['name'] == userName;
+        if (isFirstPlayer && status == 'waiting' && playersData.length >= 15 && roomCode.isNotEmpty) {
+          startGame();
+        }
+        
+        notifyListeners();
       }
     });
+  }
+
+  void _handleRoomDeleted() {
+    if (currentState == PlayState.setup || currentState == PlayState.matchmaking) {
+      return;
+    }
+    
+    _roomSubscription?.cancel();
+    _roomSubscription = null;
+    roomCode = '';
+    currentState = PlayState.setup; // Chuyển về setup để UI pop về Menu
+    notifyListeners();
   }
 
   void _handleGameStarted(List playersData) async {

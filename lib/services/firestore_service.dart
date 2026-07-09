@@ -102,26 +102,32 @@ class FirestoreService {
 
         final List players = List.from(snapshot.data()?['players'] ?? []);
         
-        // Kiểm tra xem người thoát có phải Host không
-        bool wasHost = false;
-        for (var p in players) {
-          if (p['name'] == userName && p['isHost'] == true) {
-            wasHost = true;
-            break;
-          }
+        // Tìm người chơi thoát
+        int index = players.indexWhere((p) => p['name'] == userName);
+        if (index == -1) {
+          return;
         }
 
-        players.removeWhere((p) => p['name'] == userName);
+        bool wasHost = players[index]['isHost'] == true;
+        players.removeAt(index);
 
-        if (players.isEmpty || wasHost) {
-          // XÓA HOÀN TOÀN DOCUMENT PHÒNG TRÊN FIRESTORE nếu không còn ai HOẶC Host thoát
+        if (players.isEmpty) {
+          // XÓA HOÀN TOÀN DOCUMENT PHÒNG TRÊN FIRESTORE nếu không còn ai
           transaction.delete(roomRef);
           debugPrint('===> FIRESTORE: Đã xóa document phòng $roomCode.');
         } else {
+          // Nếu người thoát là Host, chuyển quyền cho người tiếp theo
+          if (wasHost) {
+            players[0]['isHost'] = true;
+            players[0]['isReady'] = true;
+            debugPrint('===> FIRESTORE: Chuyển quyền Host phòng $roomCode cho ${players[0]['name']}.');
+          }
+
           // Cập nhật danh sách và số lượng người chơi
           transaction.update(roomRef, {
             'players': players,
             'currentPlayersCount': players.length,
+            'hostName': players[0]['name'], // Cập nhật tên host mới nếu cần
           });
         }
       });
