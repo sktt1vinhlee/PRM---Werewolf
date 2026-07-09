@@ -146,7 +146,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Đảm bảo tên đã được load trước khi thực hiện hành động
   Future<void> _ensureNameLoaded() async {
-    if (_isNameLoaded) return;
+    if (_isNameLoaded) {
+      return;
+    }
     int attempts = 0;
     while (!_isNameLoaded && attempts < 10) {
       await Future.delayed(const Duration(milliseconds: 100));
@@ -281,7 +283,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // Tự động vào trận sau 5 giây hiển thị vai trò
     Future.delayed(const Duration(seconds: 5), () {
-      if (currentState != PlayState.roleReveal) return;
+      if (currentState != PlayState.roleReveal) {
+        return;
+      }
       currentState = PlayState.playing;
       dayNumber = 1;
       currentPhase = GamePhase.night;
@@ -302,7 +306,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         ));
       }
       
-      if (roomCode.isEmpty) simulateWerewolfNightTarget();
+      if (roomCode.isEmpty) {
+        simulateWerewolfNightTarget();
+      }
       startPhaseTimer(15);
       notifyListeners();
     });
@@ -422,7 +428,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // 5. Tự động vào trận sau 5 giây
     Future.delayed(const Duration(seconds: 5), () {
-      if (currentState != PlayState.roleReveal) return;
+      if (currentState != PlayState.roleReveal) {
+        return;
+      }
       currentState = PlayState.playing;
       dayNumber = 1;
       currentPhase = GamePhase.night;
@@ -469,7 +477,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
 
         // Đợi một chút trước khi thử lại hoặc tạo phòng mới
-        if (i < 2) await Future.delayed(const Duration(seconds: 2));
+        if (i < 2) {
+          await Future.delayed(const Duration(seconds: 2));
+        }
       }
 
       // Nếu không tìm thấy phòng nào sau thời gian chờ, tiến hành tạo phòng công khai mới
@@ -519,8 +529,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     int targetWolves = max(1, (actualPlayerCount / 4).round());
     List<RoleDefinition> wolfPool = [];
     
-    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
-    if (random.nextBool() && targetWolves >= 2) wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
+    if (random.nextBool() && targetWolves >= 2) {
+      wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
+    }
+    if (random.nextBool() && targetWolves >= 2) {
+      wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
+    }
     while (wolfPool.length < targetWolves) {
       wolfPool.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
     }
@@ -529,7 +543,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
     roles.addAll(specials.take(min(specials.length, actualPlayerCount - roles.length)));
     
-    while (roles.length < actualPlayerCount) roles.add(roleDefinitions.firstWhere((r) => r.id == 'dan'));
+    while (roles.length < actualPlayerCount) {
+      roles.add(roleDefinitions.firstWhere((r) => r.id == 'dan'));
+    }
     roles.shuffle(random);
 
     // 3. Tạo dữ liệu người chơi để bắn lên Firebase
@@ -567,11 +583,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void updatePlayerCount(int count) { playerCount = count; notifyListeners(); }
-  void selectPlayer(OnlinePlayer? player) { selectedPlayer = player; notifyListeners(); }
+  void updatePlayerCount(int count) { 
+    playerCount = count; 
+    notifyListeners(); 
+  }
+  void selectPlayer(OnlinePlayer? player) { 
+    selectedPlayer = player; 
+    notifyListeners(); 
+  }
 
   void syncGameState() {
-    if (roomCode.isEmpty) return;
+    if (roomCode.isEmpty) {
+      return;
+    }
     
     firestoreSvc.updateRoomData(roomCode, {
       'dayNumber': dayNumber,
@@ -582,23 +606,45 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool shouldRevealRole(OnlinePlayer player) {
-    if (!player.isAlive) return true;
-    if (player.id == myPlayer?.id) return true;
-    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return true;
-    if (player.hasBeenScannedBySeer) return true;
-    if (lover1 != null && lover2 != null) {
-      if (myPlayer?.id == lover1!.id && player.id == lover2!.id) return true;
-      if (myPlayer?.id == lover2!.id && player.id == lover1!.id) return true;
+    if (!player.isAlive) {
+      return true;
     }
-    if (xathuRevealed && player.role.id == 'xa_thu') return true;
+    if (player.id == myPlayer?.id) {
+      return true;
+    }
+    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) {
+      return true;
+    }
+    if (player.hasBeenScannedBySeer) {
+      return true;
+    }
+    if (lover1 != null && lover2 != null) {
+      if (myPlayer?.id == lover1!.id && player.id == lover2!.id) {
+        return true;
+      }
+      if (myPlayer?.id == lover2!.id && player.id == lover1!.id) {
+        return true;
+      }
+    }
+    if (xathuRevealed && player.role.id == 'xa_thu') {
+      return true;
+    }
     return false;
   }
 
   Color getPlayerBorderColor(OnlinePlayer player) {
-    if (selectedPlayer?.id == player.id) return const Color(0xFFFFD54F);
-    if (!player.isAlive) return Colors.grey[700]!;
-    if (player.id == myPlayer?.id) return player.role.primaryColor;
-    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350);
+    if (selectedPlayer?.id == player.id) {
+      return const Color(0xFFFFD54F);
+    }
+    if (!player.isAlive) {
+      return Colors.grey[700]!;
+    }
+    if (player.id == myPlayer?.id) {
+      return player.role.primaryColor;
+    }
+    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) {
+      return const Color(0xFFEF5350);
+    }
     if (player.hasBeenScannedBySeer) {
       final isWolf = player.role.team == RoleTeam.werewolf || player.id == cursedPlayerId;
       return isWolf ? const Color(0xFFEF5350) : const Color(0xFF81C784);
@@ -607,13 +653,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String getPlayerRoleNameDisplay(OnlinePlayer player) {
-    if (!shouldRevealRole(player)) return 'ẨN VAI TRÒ';
-    if (player.id == cursedPlayerId && player.isAlive) return 'role_soi';
+    if (!shouldRevealRole(player)) {
+      return 'ẨN VAI TRÒ';
+    }
+    if (player.id == cursedPlayerId && player.isAlive) {
+      return 'role_soi';
+    }
     return player.role.name;
   }
 
   bool shouldShowLoverHeart(OnlinePlayer player) {
-    if (!player.isAlive || lover1 == null || lover2 == null) return false;
+    if (!player.isAlive || lover1 == null || lover2 == null) {
+      return false;
+    }
     final isLover = player.id == lover1!.id || player.id == lover2!.id;
     final canSee = myPlayer?.role.id == 'cupid' || myPlayer?.id == lover1!.id || myPlayer?.id == lover2!.id;
     return isLover && canSee;
@@ -627,7 +679,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void sendUserMessage(String text) {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty) {
+      return;
+    }
     
     final isWolfChannel = currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf;
     final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
@@ -658,21 +712,33 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool isChatDisabled() {
-    if (currentState != PlayState.playing) return false;
-    if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf;
+    if (currentState != PlayState.playing) {
+      return false;
+    }
+    if (currentPhase == GamePhase.night) {
+      return myPlayer?.role.team != RoleTeam.werewolf;
+    }
     return false;
   }
 
   String getChatHintText() {
-    if (currentState != PlayState.playing) return langSvc.t('chat_hint');
-    if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf ? langSvc.t('chat_night_disabled') : langSvc.t('chat_wolf_hint');
-    if (myPlayer != null && !myPlayer!.isAlive) return langSvc.t('chat_ghost_hint');
+    if (currentState != PlayState.playing) {
+      return langSvc.t('chat_hint');
+    }
+    if (currentPhase == GamePhase.night) {
+      return myPlayer?.role.team != RoleTeam.werewolf ? langSvc.t('chat_night_disabled') : langSvc.t('chat_wolf_hint');
+    }
+    if (myPlayer != null && !myPlayer!.isAlive) {
+      return langSvc.t('chat_ghost_hint');
+    }
     return langSvc.t('chat_hint');
   }
 
   void startPhaseTimer(int seconds) {
     _phaseTimer?.cancel();
-    if (currentState == PlayState.ended) return;
+    if (currentState == PlayState.ended) {
+      return;
+    }
 
     phaseTimerSeconds = seconds;
     _phaseTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -684,7 +750,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         
         // Chỉ Host mới thực hiện chuyển phase trong chế độ Online
         final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
-        if (roomCode.isNotEmpty && !isHost) return;
+        if (roomCode.isNotEmpty && !isHost) {
+          return;
+        }
 
         if (currentPhase == GamePhase.night) {
           transitionToDay();
@@ -698,13 +766,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void transitionToDay() async {
-    if (currentState == PlayState.ended || hunterSkillTriggered) return;
+    if (currentState == PlayState.ended || hunterSkillTriggered) {
+      return;
+    }
     stopPeriodicBotChat();
     OnlinePlayer? finalVictim;
     int maxV = 0;
     for (var p in players) {
-      if (p.voteCount > maxV) { maxV = p.voteCount; finalVictim = p; }
-      else if (p.voteCount == maxV && maxV > 0 && Random().nextBool()) finalVictim = p;
+      if (p.voteCount > maxV) { 
+        maxV = p.voteCount; 
+        finalVictim = p; 
+      } else if (p.voteCount == maxV && maxV > 0 && Random().nextBool()) {
+        finalVictim = p;
+      }
     }
     if (finalVictim != null && !finalVictim.isProtected) {
       killPlayer(finalVictim, langSvc.t('night_casualty').replaceFirst('%s', finalVictim.name));
@@ -726,25 +800,42 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // Dừng lại 2 giây để mọi người đọc thông báo kết quả đêm qua
     await Future.delayed(const Duration(seconds: 2));
-    if (currentState == PlayState.ended) return;
+    if (currentState == PlayState.ended) {
+      return;
+    }
 
     addLog('${langSvc.t('system')}: ${langSvc.t('sunrise')}');
-    for (var p in players) { p.isProtected = false; p.isPoisoned = false; p.voteCount = 0; p.isTargeted = false; p.wasProtectedByBodyguard = false; p.wasHealedByWitch = false; }
+    for (var p in players) { 
+      p.isProtected = false; 
+      p.isPoisoned = false; 
+      p.voteCount = 0; 
+      p.isTargeted = false; 
+      p.wasProtectedByBodyguard = false; 
+      p.wasHealedByWitch = false; 
+    }
     hasUsedSeerScan = false; hasUsedBodyguardProtect = false; hasUsedHealThisNight = false; hasUsedPoisonThisNight = false;
     cursedPlayerId = null; selectedPlayer = null; currentPhase = GamePhase.day;
     
     syncGameState();
     
-    if (checkGameOver().isEmpty) { startPeriodicBotChat(); startPhaseTimer(60); }
+    if (checkGameOver().isEmpty) { 
+      startPeriodicBotChat(); 
+      startPhaseTimer(60); 
+    }
     notifyListeners();
   }
 
   void transitionToVoting() {
-    if (currentState == PlayState.ended || hunterSkillTriggered) return;
+    if (currentState == PlayState.ended || hunterSkillTriggered) {
+      return;
+    }
     stopPeriodicBotChat();
     addLog('${langSvc.t('system')}: ${langSvc.t('voting_start')}');
     currentPhase = GamePhase.voting;
-    for (var p in players) { p.voteCount = 0; p.isTargeted = false; }
+    for (var p in players) { 
+      p.voteCount = 0; 
+      p.isTargeted = false; 
+    }
     _simulateBotVotesGradually();
     
     syncGameState();
@@ -754,7 +845,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void transitionToNight() async {
-    if (currentState == PlayState.ended || hunterSkillTriggered) return;
+    if (currentState == PlayState.ended || hunterSkillTriggered) {
+      return;
+    }
     stopPeriodicBotChat();
     List<OnlinePlayer> alive = players.where((p) => p.isAlive).toList();
     OnlinePlayer? hanged; 
@@ -772,7 +865,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // Nếu số vote <= 1 thì không ai bị treo cổ
     if (hanged != null && maxV > 1) {
-      if (hanged.role.id == 'nerd') isNerdHanged = true;
+      if (hanged.role.id == 'nerd') {
+        isNerdHanged = true;
+      }
       killPlayer(hanged, '${hanged.name} ${langSvc.t('lynched')}');
     } else {
       addLog('${langSvc.t('system')}: ${langSvc.t('no_lynch')}');
@@ -782,9 +877,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // Dừng lại 2 giây để mọi người đọc thông báo kết quả vote
     await Future.delayed(const Duration(seconds: 2));
-    if (currentState == PlayState.ended) return;
+    if (currentState == PlayState.ended) {
+      return;
+    }
 
-    for (var p in players) p.voteCount = 0;
+    for (var p in players) {
+      p.voteCount = 0;
+    }
     dayNumber++; 
     currentPhase = GamePhase.night; 
     selectedPlayer = null;
@@ -801,7 +900,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void executeVote(OnlinePlayer target) {
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
-    for (var p in players) if (p.isTargeted) { p.voteCount -= weight; p.isTargeted = false; }
+    for (var p in players) {
+      if (p.isTargeted) { 
+        p.voteCount -= weight; 
+        p.isTargeted = false; 
+      }
+    }
     target.voteCount += weight; target.isTargeted = true;
     
     syncGameState();
@@ -809,15 +913,24 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void killPlayer(OnlinePlayer player, String reason) {
-    if (!player.isAlive) return;
+    if (!player.isAlive) {
+      return;
+    }
     player.isAlive = false; addLog(reason);
     if (lover1 != null && lover2 != null) {
-      if (player.id == lover1!.id && lover2!.isAlive) killPlayer(lover2!, langSvc.t('lover_tragedy'));
-      else if (player.id == lover2!.id && lover1!.isAlive) killPlayer(lover1!, langSvc.t('lover_tragedy'));
+      if (player.id == lover1!.id && lover2!.isAlive) {
+        killPlayer(lover2!, langSvc.t('lover_tragedy'));
+      } else if (player.id == lover2!.id && lover1!.isAlive) {
+        killPlayer(lover1!, langSvc.t('lover_tragedy'));
+      }
     }
     if (player.role.id == 'tho_san') {
-      if (player.id == myPlayer?.id) { hunterSkillTriggered = true; hunterWhoDied = player; }
-      else simulateBotHunterShot(player);
+      if (player.id == myPlayer?.id) { 
+        hunterSkillTriggered = true; 
+        hunterWhoDied = player; 
+      } else {
+        simulateBotHunterShot(player);
+      }
     }
   }
 
@@ -883,7 +996,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void cancelWerewolfBite() {
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
-    for (var p in players) if (p.isTargeted) { p.voteCount -= weight; p.isTargeted = false; }
+    for (var p in players) {
+      if (p.isTargeted) { 
+        p.voteCount -= weight; 
+        p.isTargeted = false; 
+      }
+    }
     _updateWerewolfLeadingTarget(); 
     syncGameState();
     notifyListeners();
@@ -891,7 +1009,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _updateWerewolfLeadingTarget() {
     OnlinePlayer? leader; int maxV = 0;
-    for (var p in players) if (p.voteCount > maxV) { maxV = p.voteCount; leader = p; }
+    for (var p in players) {
+      if (p.voteCount > maxV) { 
+        maxV = p.voteCount; 
+        leader = p; 
+      }
+    }
     werewolfTarget = leader;
   }
 
@@ -934,23 +1057,34 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void cancelBodyguardProtect() {
-    for (var p in players) if (p.wasProtectedByBodyguard) { p.isProtected = false; p.wasProtectedByBodyguard = false; }
+    for (var p in players) {
+      if (p.wasProtectedByBodyguard) { 
+        p.isProtected = false; 
+        p.wasProtectedByBodyguard = false; 
+      }
+    }
     hasUsedBodyguardProtect = false; lastProtectedPlayerId = null; notifyListeners();
   }
 
   void cancelWitchAction() {
     if (hasUsedHealThisNight) {
-      for (var p in players) p.wasHealedByWitch = false;
+      for (var p in players) {
+        p.wasHealedByWitch = false;
+      }
       hasHealPotion = true; hasUsedHealThisNight = false;
     } else if (hasUsedPoisonThisNight) {
-      for (var p in players) p.isPoisoned = false;
+      for (var p in players) {
+        p.isPoisoned = false;
+      }
       hasPoisonPotion = true; hasUsedPoisonThisNight = false;
     }
     notifyListeners();
   }
 
   void executeGunnerShoot(OnlinePlayer target) {
-    if (xathuBullets <= 0 || !target.isAlive) return;
+    if (xathuBullets <= 0 || !target.isAlive) {
+      return;
+    }
     xathuBullets--; xathuRevealed = true;
     killPlayer(target, langSvc.t('gunner_log').replaceFirst('%s', target.name));
     
@@ -965,10 +1099,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String getActionInstructionText() {
-    if (hunterSkillTriggered) return langSvc.t('instruction_hunter');
+    if (hunterSkillTriggered) {
+      return langSvc.t('instruction_hunter');
+    }
     if (selectedPlayer == null) {
       if (currentPhase == GamePhase.night) {
-        if (myPlayer!.role.id == 'cupid' && lover1 == null) return langSvc.t('instruction_cupid');
+        if (myPlayer!.role.id == 'cupid' && lover1 == null) {
+          return langSvc.t('instruction_cupid');
+        }
         return langSvc.t('instruction_skill');
       }
       return currentPhase == GamePhase.day ? langSvc.t('instruction_discuss') : langSvc.t('instruction_vote');
@@ -977,7 +1115,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String checkGameOver() {
-    if (currentState != PlayState.playing || players.isEmpty) return '';
+    if (currentState != PlayState.playing || players.isEmpty) {
+      return '';
+    }
     if (isNerdHanged) {
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
@@ -1000,8 +1140,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool isMyWin(String msg) {
-    if (myPlayer == null) return false;
-    if (msg.contains('Nerd') || msg.contains('Ngốc')) return myPlayer!.role.id == 'nerd';
+    if (myPlayer == null) {
+      return false;
+    }
+    if (msg.contains('Nerd') || msg.contains('Ngốc')) {
+      return myPlayer!.role.id == 'nerd';
+    }
     return (myPlayer!.role.team == RoleTeam.werewolf && (msg.contains('Sói') || msg.contains('Werewolves'))) || (myPlayer!.role.team != RoleTeam.werewolf && (msg.contains('Dân') || msg.contains('Villagers')));
   }
 
@@ -1009,9 +1153,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
     for (var b in bots) {
       Timer(Duration(milliseconds: 500 + Random().nextInt(12000)), () {
-        if (currentPhase != GamePhase.voting || currentState != PlayState.playing) return;
+        if (currentPhase != GamePhase.voting || currentState != PlayState.playing) {
+          return;
+        }
         final t = players.where((p) => p.isAlive && p.id != b.id).toList();
-        if (t.isNotEmpty) { t[Random().nextInt(t.length)].voteCount += (b.role.id == 'soi_dau_dan' ? 2 : 1); notifyListeners(); }
+        if (t.isNotEmpty) { 
+          t[Random().nextInt(t.length)].voteCount += (b.role.id == 'soi_dau_dan' ? 2 : 1); 
+          notifyListeners(); 
+        }
       });
     }
   }
@@ -1019,7 +1168,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void simulateBotChatResponse(String msg) {
     Timer(const Duration(milliseconds: 800), () {
       final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
-      if (bots.isNotEmpty) { chatMessages.add(ChatMessage(senderName: bots[Random().nextInt(bots.length)].name, content: langSvc.t('bot_calm_down'), time: DateTime.now())); notifyListeners(); }
+      if (bots.isNotEmpty) { 
+        chatMessages.add(ChatMessage(senderName: bots[Random().nextInt(bots.length)].name, content: langSvc.t('bot_calm_down'), time: DateTime.now())); 
+        notifyListeners(); 
+      }
     });
   }
 
@@ -1031,9 +1183,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void stopPeriodicBotChat() => botChatTimer?.cancel();
 
   void _simulateRandomBotChat() {
-    if (currentState != PlayState.playing || currentPhase != GamePhase.day) return;
+    if (currentState != PlayState.playing || currentPhase != GamePhase.day) {
+      return;
+    }
     final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id).toList();
-    if (bots.isEmpty) return;
+    if (bots.isEmpty) {
+      return;
+    }
     final b = bots[Random().nextInt(bots.length)];
     final s = players.where((p) => p.isAlive && p.id != b.id).toList();
     if (s.isNotEmpty) {
@@ -1049,10 +1205,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void simulateWerewolfNightTarget() {
     final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id && p.role.team == RoleTeam.werewolf).toList();
     final targets = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).toList();
-    if (targets.isEmpty) return;
+    if (targets.isEmpty) {
+      return;
+    }
     for (var b in bots) {
       Timer(Duration(milliseconds: 1000 + Random().nextInt(8000)), () {
-        if (currentPhase != GamePhase.night || currentState != PlayState.playing) return;
+        if (currentPhase != GamePhase.night || currentState != PlayState.playing) {
+          return;
+        }
         final target = targets[Random().nextInt(targets.length)];
         final weight = b.role.id == 'soi_dau_dan' ? 2 : 1;
         target.voteCount += weight;
@@ -1064,11 +1224,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void simulateBotHunterShot(OnlinePlayer h) {
     final t = players.where((p) => p.isAlive && p.id != h.id).toList();
-    if (t.isNotEmpty) killPlayer(t[Random().nextInt(t.length)], langSvc.t('hunter_took_down'));
+    if (t.isNotEmpty) {
+      killPlayer(t[Random().nextInt(t.length)], langSvc.t('hunter_took_down'));
+    }
   }
 
-  void addLog(String log) { actionLogs.add(log); notifyListeners(); }
-  @override void dispose() { 
+  void addLog(String log) { 
+    actionLogs.add(log); 
+    notifyListeners(); 
+  }
+  @override 
+  void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (roomCode.isNotEmpty) {
       leaveRoom();

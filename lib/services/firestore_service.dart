@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -32,9 +33,9 @@ class FirestoreService {
           }
         ],
       });
-      print('Room $roomCode created successfully on Firebase');
+      debugPrint('Room $roomCode created successfully on Firebase');
     } catch (e) {
-      print('Error creating room: $e');
+      debugPrint('Error creating room: $e');
       rethrow;
     }
   }
@@ -43,9 +44,9 @@ class FirestoreService {
   Future<void> deleteRoom(String roomCode) async {
     try {
       await _db.collection('rooms').doc(roomCode).delete();
-      print('===> FIRESTORE: Đã xóa phòng $roomCode (Quick Delete)');
+      debugPrint('===> FIRESTORE: Đã xóa phòng $roomCode (Quick Delete)');
     } catch (e) {
-      print('Error deleting room: $e');
+      debugPrint('Error deleting room: $e');
     }
   }
 
@@ -83,7 +84,7 @@ class FirestoreService {
         }
       });
     } catch (e) {
-      print('Error joining room: $e');
+      debugPrint('Error joining room: $e');
       rethrow;
     }
   }
@@ -95,7 +96,9 @@ class FirestoreService {
       
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
+        if (!snapshot.exists) {
+          return;
+        }
 
         final List players = List.from(snapshot.data()?['players'] ?? []);
         
@@ -113,7 +116,7 @@ class FirestoreService {
         if (players.isEmpty || wasHost) {
           // XÓA HOÀN TOÀN DOCUMENT PHÒNG TRÊN FIRESTORE nếu không còn ai HOẶC Host thoát
           transaction.delete(roomRef);
-          print('===> FIRESTORE: Đã xóa document phòng $roomCode.');
+          debugPrint('===> FIRESTORE: Đã xóa document phòng $roomCode.');
         } else {
           // Cập nhật danh sách và số lượng người chơi
           transaction.update(roomRef, {
@@ -123,7 +126,7 @@ class FirestoreService {
         }
       });
     } catch (e) {
-      print('Error leaving room: $e');
+      debugPrint('Error leaving room: $e');
     }
   }
 
@@ -148,7 +151,7 @@ class FirestoreService {
         'messages': [], // Khởi tạo mảng chat trống
       });
     } catch (e) {
-      print('Error starting game: $e');
+      debugPrint('Error starting game: $e');
       rethrow;
     }
   }
@@ -160,7 +163,7 @@ class FirestoreService {
         'messages': FieldValue.arrayUnion([messageData]),
       });
     } catch (e) {
-      print('Error sending message: $e');
+      debugPrint('Error sending message: $e');
     }
   }
 
@@ -169,7 +172,7 @@ class FirestoreService {
     try {
       await _db.collection('rooms').doc(roomCode).update(data);
     } catch (e) {
-      print('Error updating room data: $e');
+      debugPrint('Error updating room data: $e');
     }
   }
 
@@ -194,7 +197,7 @@ class FirestoreService {
         }
       }
     } catch (e) {
-      print('Error finding public room: $e');
+      debugPrint('Error finding public room: $e');
     }
     return null;
   }

@@ -42,7 +42,7 @@ class _RoleLibraryScreenState extends State<RoleLibraryScreen> {
           Container(
             width: 100,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
+              color: Colors.white.withValues(alpha: 0.05),
               border: const Border(right: BorderSide(color: Colors.white12)),
             ),
             child: ListView.builder(
@@ -56,7 +56,7 @@ class _RoleLibraryScreenState extends State<RoleLibraryScreen> {
                     height: 90,
                     margin: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: isSelected ? role.primaryColor : Colors.white.withOpacity(0.05),
+                      color: isSelected ? role.primaryColor : Colors.white.withValues(alpha: 0.05),
                       borderRadius: BorderRadius.circular(16),
                       border: isSelected ? Border.all(color: Colors.white, width: 2) : null,
                     ),
@@ -88,7 +88,7 @@ class _RoleLibraryScreenState extends State<RoleLibraryScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.library_books, size: 80, color: Colors.white.withOpacity(0.1)),
+                        Icon(Icons.library_books, size: 80, color: Colors.white.withValues(alpha: 0.1)),
                         const SizedBox(height: 16),
                         Text(
                           langSvc.currentLanguage == AppLanguage.vi 
@@ -110,7 +110,7 @@ class _RoleLibraryScreenState extends State<RoleLibraryScreen> {
                               Container(
                                 padding: const EdgeInsets.all(20),
                                 decoration: BoxDecoration(
-                                  color: _selectedRole!.primaryColor.withOpacity(0.2),
+                                  color: _selectedRole!.primaryColor.withValues(alpha: 0.2),
                                   shape: BoxShape.circle,
                                   border: Border.all(color: _selectedRole!.primaryColor, width: 2),
                                 ),
@@ -119,6 +119,7 @@ class _RoleLibraryScreenState extends State<RoleLibraryScreen> {
                               const SizedBox(height: 16),
                               Text(
                                 langSvc.t(_selectedRole!.name).toUpperCase(),
+                                textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: _selectedRole!.secondaryColor,
                                   fontSize: 28,
