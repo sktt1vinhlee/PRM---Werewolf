@@ -4,13 +4,15 @@ class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   /// Tạo phòng mới trên Firestore
-  Future<void> createRoom(String roomCode, String hostName, int playerCount) async {
+  Future<void> createRoom(String roomCode, String hostName, int playerCount, {bool isPublic = false}) async {
     try {
       await _db.collection('rooms').doc(roomCode).set({
         'roomCode': roomCode,
         'hostName': hostName,
         'playerCount': playerCount,
+        'currentPlayersCount': 1,
         'status': 'waiting', // waiting, playing, ended
+        'isPublic': isPublic,
         'createdAt': FieldValue.serverTimestamp(),
         'players': [
           {
@@ -21,8 +23,8 @@ class FirestoreService {
         ],
         'messages': [
           {
-            'senderName': 'Hệ thống',
-            'content': 'Phòng đã được tạo thành công!',
+            'senderName': 'system',
+            'content': 'lobby_created',
             'isSystem': true,
             'isWerewolfOnly': false,
             'isGhost': false,
@@ -37,6 +39,16 @@ class FirestoreService {
     }
   }
 
+  /// Xóa phòng ngay lập tức (dùng khi thoát gấp)
+  Future<void> deleteRoom(String roomCode) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).delete();
+      print('===> FIRESTORE: Đã xóa phòng $roomCode (Quick Delete)');
+    } catch (e) {
+      print('Error deleting room: $e');
+    }
+  }
+
   /// Tham gia vào phòng đã có
   Future<void> joinRoom(String roomCode, String userName) async {
     try {
@@ -48,7 +60,13 @@ class FirestoreService {
           throw Exception('Room not found');
         }
 
-        List players = List.from(snapshot.data()?['players'] ?? []);
+        final data = snapshot.data();
+        List players = List.from(data?['players'] ?? []);
+        int limit = data?['playerCount'] ?? 15;
+
+        if (players.length >= limit) {
+          throw Exception('Room is full');
+        }
         
         // Kiểm tra xem đã có người chơi này chưa (tránh trùng lặp nếu ấn nhanh)
         bool exists = players.any((p) => p['name'] == userName);
@@ -58,7 +76,10 @@ class FirestoreService {
             'isHost': false,
             'isReady': false,
           });
-          transaction.update(roomRef, {'players': players});
+          transaction.update(roomRef, {
+            'players': players,
+            'currentPlayersCount': players.length,
+          });
         }
       });
     } catch (e) {
@@ -76,35 +97,29 @@ class FirestoreService {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
-        List players = List.from(snapshot.data()?['players'] ?? []);
+        final List players = List.from(snapshot.data()?['players'] ?? []);
+        
+        // Kiểm tra xem người thoát có phải Host không
+        bool wasHost = false;
+        for (var p in players) {
+          if (p['name'] == userName && p['isHost'] == true) {
+            wasHost = true;
+            break;
+          }
+        }
+
         players.removeWhere((p) => p['name'] == userName);
 
-        if (players.isEmpty) {
-          // XÓA HOÀN TOÀN DOCUMENT PHÒNG TRÊN FIRESTORE
+        if (players.isEmpty || wasHost) {
+          // XÓA HOÀN TOÀN DOCUMENT PHÒNG TRÊN FIRESTORE nếu không còn ai HOẶC Host thoát
           transaction.delete(roomRef);
-          print('===> FIRESTORE: Đã xóa document phòng $roomCode vì không còn người chơi.');
+          print('===> FIRESTORE: Đã xóa document phòng $roomCode.');
         } else {
-          // Nếu người thoát là Host, chuyển quyền Host cho người tiếp theo
-          bool wasHost = false;
-          final List originalPlayers = snapshot.data()?['players'] ?? [];
-          for (var p in originalPlayers) {
-            if (p['name'] == userName && p['isHost'] == true) {
-              wasHost = true;
-              break;
-            }
-          }
-
-          if (wasHost && players.isNotEmpty) {
-            players[0]['isHost'] = true;
-            players[0]['isReady'] = true;
-            // Cập nhật lại cả hostName ở cấp document để đồng bộ
-            transaction.update(roomRef, {
-              'players': players,
-              'hostName': players[0]['name']
-            });
-          } else {
-            transaction.update(roomRef, {'players': players});
-          }
+          // Cập nhật danh sách và số lượng người chơi
+          transaction.update(roomRef, {
+            'players': players,
+            'currentPlayersCount': players.length,
+          });
         }
       });
     } catch (e) {
@@ -147,6 +162,41 @@ class FirestoreService {
     } catch (e) {
       print('Error sending message: $e');
     }
+  }
+
+  /// Cập nhật dữ liệu phòng (dùng để đồng bộ trạng thái game)
+  Future<void> updateRoomData(String roomCode, Map<String, dynamic> data) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update(data);
+    } catch (e) {
+      print('Error updating room data: $e');
+    }
+  }
+
+  /// Tìm phòng ghép trận Online (Ưu tiên phòng sắp đầy)
+  Future<String?> findPublicRoom() async {
+    try {
+      // Tìm phòng công khai, đang chờ, chưa đầy và ưu tiên phòng có nhiều người nhất
+      final snapshot = await _db
+          .collection('rooms')
+          .where('isPublic', isEqualTo: true)
+          .where('status', isEqualTo: 'waiting')
+          .orderBy('currentPlayersCount', descending: true)
+          .limit(5) // Lấy top 5 phòng gần đầy nhất
+          .get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        int current = data['currentPlayersCount'] ?? 0;
+        int limit = data['playerCount'] ?? 15;
+        if (current < limit) {
+          return doc.id;
+        }
+      }
+    } catch (e) {
+      print('Error finding public room: $e');
+    }
+    return null;
   }
 }
 

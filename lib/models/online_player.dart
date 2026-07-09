@@ -28,4 +28,18 @@ class OnlinePlayer {
     this.wasProtectedByBodyguard = false,
     this.wasHealedByWitch = false,
   });
+
+  Map<String, dynamic> toStatusMap() {
+    return {
+      'id': id,
+      'isAlive': isAlive,
+      'voteCount': voteCount,
+      'isTargeted': isTargeted,
+      'isProtected': isProtected,
+      'isPoisoned': isPoisoned,
+      'wasProtectedByBodyguard': wasProtectedByBodyguard,
+      'wasHealedByWitch': wasHealedByWitch,
+      'hasBeenScannedBySeer': hasBeenScannedBySeer,
+    };
+  }
 }

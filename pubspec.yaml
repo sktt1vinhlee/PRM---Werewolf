@@ -40,10 +40,12 @@ dependencies:
   cloud_firestore: ^5.6.0    # Bắt buộc: Database NoSQL thời gian thực
   firebase_auth: ^5.4.0      # Bắt buộc: Đăng nhập ẩn danh
   firebase_database: ^11.1.0 # Bổ sung: Realtime Database cho Game
+  shared_preferences: ^2.5.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -62,6 +64,12 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "lib/werewolf.png"
+  min_sdk_android: 21
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

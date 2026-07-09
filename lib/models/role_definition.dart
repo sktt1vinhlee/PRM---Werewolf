@@ -10,6 +10,9 @@ class RoleDefinition {
   final Color primaryColor;
   final Color secondaryColor;
   final bool isUnique;
+  final int difficulty; // 1 to 5
+  final String? lore;
+  final List<String>? tips;
 
   RoleDefinition({
     required this.id,
@@ -20,5 +23,8 @@ class RoleDefinition {
     required this.primaryColor,
     required this.secondaryColor,
     required this.isUnique,
+    this.difficulty = 1,
+    this.lore,
+    this.tips,
   });
 }

@@ -12,7 +12,8 @@ class PlayScreen extends StatefulWidget {
   final String? roomCode;
   final String? userName;
   final bool isQuickMatch;
-  const PlayScreen({super.key, this.roomCode, this.userName, this.isQuickMatch = false});
+  final bool isOnlineQuickMatch;
+  const PlayScreen({super.key, this.roomCode, this.userName, this.isQuickMatch = false, this.isOnlineQuickMatch = false});
 
   @override
   State<PlayScreen> createState() => _PlayScreenState();
@@ -21,8 +22,12 @@ class PlayScreen extends StatefulWidget {
 class _PlayScreenState extends State<PlayScreen> {
   late final GameController _controller;
   final TextEditingController _chatController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
+  final ScrollController _logScrollController = ScrollController();
   bool _showChatTab = true;
   bool _isGameOverDialogShowing = false;
+  bool _shouldAutoScrollChat = true;
+  bool _shouldAutoScrollLog = true;
 
   @override
   void initState() {
@@ -35,8 +40,7 @@ class _PlayScreenState extends State<PlayScreen> {
     
     if (widget.isQuickMatch) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _controller.updatePlayerCount(15);
-        _controller.startGame();
+        _controller.startQuickMatch(isOnline: widget.isOnlineQuickMatch);
       });
     }
   }
@@ -49,7 +53,26 @@ class _PlayScreenState extends State<PlayScreen> {
     }
     if (mounted) {
       setState(() {});
+      _autoScrollIfNeeded();
     }
+  }
+
+  void _autoScrollIfNeeded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_showChatTab && _shouldAutoScrollChat && _chatScrollController.hasClients) {
+        _chatScrollController.animateTo(
+          _chatScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      } else if (!_showChatTab && _shouldAutoScrollLog && _logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   @override
@@ -57,6 +80,8 @@ class _PlayScreenState extends State<PlayScreen> {
     _controller.removeListener(_onControllerUpdate);
     _controller.dispose();
     _chatController.dispose();
+    _chatScrollController.dispose();
+    _logScrollController.dispose();
     super.dispose();
   }
 
@@ -66,24 +91,42 @@ class _PlayScreenState extends State<PlayScreen> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: Row(children: [
-          Icon(isWin ? Icons.emoji_events : Icons.sentiment_very_dissatisfied, color: isWin ? const Color(0xFFFFD54F) : const Color(0xFFEF5350), size: 28),
-          const SizedBox(width: 10),
-          Text(isWin ? langSvc.t('victory') : langSvc.t('defeat'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Icon(isWin ? Icons.emoji_events : Icons.sentiment_very_dissatisfied, color: isWin ? const Color(0xFFFFD54F) : const Color(0xFFEF5350), size: 32),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              isWin ? langSvc.t('victory').toUpperCase() : langSvc.t('defeat').toUpperCase(), 
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 24)
+            ),
+          ),
         ]),
-        content: Text(message, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        content: Text(message, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         actions: [
-          ElevatedButton(
-            onPressed: () async { 
-              setState(() => _isGameOverDialogShowing = false); 
-              await _controller.leaveRoom();
-              if (mounted) {
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton(
+              onPressed: () {
+                _controller.leaveRoom(); 
                 final nav = Navigator.of(context);
                 nav.popUntil((route) => route.isFirst);
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD54F), foregroundColor: Colors.black),
-            child: Text(langSvc.t('back_to_menu'), style: const TextStyle(fontWeight: FontWeight.bold)),
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFD54F), 
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(27)),
+                elevation: 0,
+              ),
+              child: FittedBox(
+                child: Text(
+                  langSvc.t('back_to_menu').toUpperCase(), 
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -128,6 +171,8 @@ class _PlayScreenState extends State<PlayScreen> {
 
         if (state == PlayState.setup) {
           body = SafeArea(child: _buildSetupView());
+        } else if (state == PlayState.matchmaking) {
+          body = _buildMatchmakingView();
         } else if (state == PlayState.lobby) {
           body = SafeArea(child: _buildLobbyView());
         } else if (state == PlayState.roleReveal) {
@@ -137,7 +182,7 @@ class _PlayScreenState extends State<PlayScreen> {
           bottomBar = _buildBottomOnlineController();
         }
         
-        if (state == PlayState.setup || state == PlayState.lobby || state == PlayState.roleReveal) {
+        if (state == PlayState.setup || state == PlayState.matchmaking || state == PlayState.lobby || state == PlayState.roleReveal) {
           body = Container(
             width: double.infinity,
             height: double.infinity,
@@ -145,11 +190,15 @@ class _PlayScreenState extends State<PlayScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF4FC3F7), Color(0xFF0288D1)],
+                colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
               ),
             ),
             child: body,
           );
+        }
+
+        if (state == PlayState.lobby) {
+          bottomBar = SafeArea(child: _buildLobbyBottomBar());
         }
 
         final bgColor = isNight ? const Color(0xFF0F172A) : const Color(0xFF9CDCFD);
@@ -173,6 +222,48 @@ class _PlayScreenState extends State<PlayScreen> {
     );
   }
 
+  Widget _buildMatchmakingView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 80,
+            height: 80,
+            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 6),
+          ),
+          const SizedBox(height: 40),
+          Text(
+            langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG TÌM TRẬN ĐẤU...' : 'FINDING MATCH...',
+            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            langSvc.currentLanguage == AppLanguage.vi ? 'Vui lòng chờ trong giây lát' : 'Please wait a moment',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 60),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.white54),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+                ),
+                child: Text(langSvc.t('cancel').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSetupView() {
     return Column(children: [
       _buildTopBar(langSvc.t('setup_room')),
@@ -183,19 +274,28 @@ class _PlayScreenState extends State<PlayScreen> {
         const SizedBox(height: 8),
         Text(langSvc.t('developing'), style: const TextStyle(color: Colors.white70, fontSize: 13)),
       ]))),
-      Padding(padding: const EdgeInsets.all(16), child: SizedBox(width: double.infinity, height: 52, child: ElevatedButton(onPressed: _controller.createRoom, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: const Color(0xFF0288D1)), child: Text(langSvc.t('create_now'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))))),
+      Padding(
+        padding: const EdgeInsets.all(16), 
+        child: _lobbyPrimaryButton(
+          langSvc.currentLanguage == AppLanguage.vi ? 'TẠO PHÒNG' : 'CREATE ROOM',
+          onPressed: _controller.createRoom
+        )
+      ),
     ]);
   }
 
   Widget _buildLobbyView() {
+    final isMatchmaking = widget.isOnlineQuickMatch;
     return Column(children: [
-      _buildTopBar(langSvc.t('lobby_title'), showInfo: true),
+      _buildTopBar(isMatchmaking ? (langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG GHÉP TRẬN' : 'MATCHMAKING') : langSvc.t('lobby_title'), showInfo: true),
       Expanded(child: SingleChildScrollView(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildRoomCodeCard(), const SizedBox(height: 16),
+        if (!isMatchmaking) ...[
+          _buildRoomCodeCard(), 
+          const SizedBox(height: 16),
+        ],
         _buildConnectedPlayersSimulator(), const SizedBox(height: 16),
         _buildChatLogTabs(),
       ]))),
-      _buildLobbyBottomBar(),
     ]);
   }
 
@@ -234,29 +334,65 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildUserProfileCard() {
-    return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white30)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(langSvc.t('your_name'), style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 10),
-      TextField(maxLength: 16, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold), decoration: InputDecoration(counterText: '', filled: true, fillColor: Colors.white.withValues(alpha: 0.1), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none), prefixIcon: const Icon(Icons.person, color: Colors.white70)), controller: TextEditingController(text: _controller.userName)..selection = TextSelection.collapsed(offset: _controller.userName.length), onChanged: _controller.updateUserName),
-    ]));
+    return Container(
+      padding: const EdgeInsets.all(16), 
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2), 
+        borderRadius: BorderRadius.circular(16), 
+        border: Border.all(color: Colors.white30)
+      ), 
+      child: Row(
+        children: [
+          const CircleAvatar(
+            backgroundColor: Color(0xFF4FC3F7),
+            child: Icon(Icons.person, color: Colors.white),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, 
+              children: [
+                Text(langSvc.t('your_name'), style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(_controller.userName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              ]
+            ),
+          ),
+        ],
+      )
+    );
   }
 
   Widget _buildLobbyPlayerCountCard() {
-    return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white30)), child: Column(children: [
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(langSvc.t('player_count'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        Text('${_controller.playerCount} ${langSvc.t('players')}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      ]),
-      Slider(
-        value: _controller.playerCount.toDouble(), 
-        min: 9, 
-        max: 18, 
-        divisions: 9, 
-        activeColor: Colors.white, 
-        inactiveColor: Colors.white30, 
-        onChanged: (v) => _controller.updatePlayerCount(v.toInt())
-      ),
-    ]));
+    return Container(
+      padding: const EdgeInsets.all(16), 
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white30)), 
+      child: Column(children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+          children: [
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(langSvc.t('player_count'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text('${_controller.playerCount} ${langSvc.t('players')}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ]
+        ),
+        Slider(
+          value: _controller.playerCount.toDouble(), 
+          min: 9, 
+          max: 18, 
+          divisions: 9, 
+          activeColor: Colors.white, 
+          inactiveColor: Colors.white30, 
+          onChanged: (v) => _controller.updatePlayerCount(v.toInt())
+        ),
+      ])
+    );
   }
 
   Widget _buildConnectedPlayersSimulator() {
@@ -320,13 +456,79 @@ class _PlayScreenState extends State<PlayScreen> {
     ]));
   }
 
+  Widget _lobbyPrimaryButton(String label, {required VoidCallback? onPressed, Color? bgColor}) {
+    return Container(
+      width: double.infinity, height: 56,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16), 
+        boxShadow: [if (onPressed != null) BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 4))]
+      ),
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bgColor ?? (onPressed == null ? Colors.white24 : Colors.white), 
+          foregroundColor: onPressed == null ? Colors.white54 : const Color(0xFF0F172A), 
+          elevation: 0, 
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+        ),
+        child: FittedBox(child: Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
+      ),
+    );
+  }
+
   Widget _buildLobbyBottomBar() {
-    final isHost = _controller.lobbyPlayerNames.isNotEmpty && _controller.lobbyPlayerNames[0] == _controller.userName;
-    return Container(padding: const EdgeInsets.all(16), child: SizedBox(width: double.infinity, height: 52, child: ElevatedButton(
-      onPressed: isHost ? _controller.startGame : null, 
-      style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: const Color(0xFF0288D1)), 
-      child: Text(isHost ? langSvc.t('start_game') : langSvc.t('waiting_host'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
-    )));
+    final isMatchmaking = widget.isOnlineQuickMatch;
+    if (isMatchmaking) {
+      return Container(
+        padding: const EdgeInsets.all(16), 
+        child: Container(
+          width: double.infinity, 
+          height: 56, 
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white24)
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              const SizedBox(width: 12),
+              Text(
+                langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG TÌM NGƯỜI CHƠI...' : 'FINDING PLAYERS...', 
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+              ),
+            ],
+          )
+        )
+      );
+    }
+
+    final isHost = _controller.lobbyPlayerNames.isNotEmpty && 
+                   _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), 
+      child: _lobbyPrimaryButton(
+        isHost ? langSvc.t('start_game') : langSvc.t('waiting_host'),
+        onPressed: isHost ? () {
+          if (_controller.lobbyPlayerNames.length < 4) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(langSvc.currentLanguage == AppLanguage.vi 
+                  ? 'Cần tối thiểu 4 người chơi để bắt đầu!' 
+                  : 'Need at least 4 players to start!'),
+                backgroundColor: const Color(0xFFC62828),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            return;
+          }
+          _controller.startGame();
+        } : null
+      )
+    );
   }
 
   Widget _buildRoleRevealView() {
@@ -458,15 +660,38 @@ class _PlayScreenState extends State<PlayScreen> {
   Widget _buildOnlinePlayTopBar() {
     final isNight = _controller.currentPhase == GamePhase.night;
     final textColor = isNight ? Colors.white70 : const Color(0xFF0F172A);
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      IconButton(onPressed: () async { 
-        if (await _onWillPop()) {
-          _controller.resetGame();
-        } 
-      }, icon: Icon(Icons.arrow_back_ios_new, color: isNight ? Colors.white : const Color(0xFF0F172A))),
-      Column(children: [Text(langSvc.t('room_code_label') + ' ${_controller.roomCode}', style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)), if (_controller.phaseTimerSeconds > 0) Text('Còn lại: ${_controller.phaseTimerSeconds}s', style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 10, fontWeight: FontWeight.bold))]),
-      IconButton(onPressed: _showOnlineRulesDialog, icon: const Icon(Icons.help_outline, color: Color(0xFFFFD54F))),
-    ]));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), 
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+        children: [
+          IconButton(onPressed: () async { 
+            if (await _onWillPop()) {
+              _controller.resetGame();
+            } 
+          }, icon: Icon(Icons.arrow_back_ios_new, color: isNight ? Colors.white : const Color(0xFF0F172A))),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    _controller.roomCode.isEmpty 
+                      ? (langSvc.currentLanguage == AppLanguage.vi ? 'CHẾ ĐỘ VỚI MÁY' : 'BOT MATCH')
+                      : '${langSvc.t('room_code_label')} ${_controller.roomCode}', 
+                    style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)
+                  ),
+                ), 
+                if (_controller.phaseTimerSeconds > 0) 
+                  Text('Còn lại: ${_controller.phaseTimerSeconds}s', style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 10, fontWeight: FontWeight.bold))
+              ]
+            ),
+          ),
+          IconButton(onPressed: _showOnlineRulesDialog, icon: const Icon(Icons.help_outline, color: Color(0xFFFFD54F))),
+        ]
+      )
+    );
   }
 
   Widget _buildOnlinePhaseHeader() {
@@ -477,9 +702,16 @@ class _PlayScreenState extends State<PlayScreen> {
     String numTxt = isNight ? '${langSvc.t('night_number')} ${_controller.dayNumber}' : '${langSvc.t('day_number')} ${_controller.dayNumber}';
     String txt = '$phaseTxt - $numTxt';
     Color clr = isNight ? const Color(0xFF311B92) : (isVoting ? const Color(0xFFC62828) : const Color(0xFFF57F17));
-    return Container(width: double.infinity, margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16), decoration: BoxDecoration(color: clr.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(12), border: Border.all(color: clr.withValues(alpha: 0.5), width: 1.5)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Row(children: [Icon(isNight ? Icons.nights_stay : Icons.wb_sunny, color: isNight ? const Color(0xFFB39DDB) : const Color(0xFFFFD54F), size: 20), const SizedBox(width: 8), Text(txt, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13))]),
-      Text('${langSvc.t('alive_count')}: ${_controller.players.where((p) => p.isAlive).length}/${_controller.playerCount}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+    return Container(width: double.infinity, margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12), decoration: BoxDecoration(color: clr.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(12), border: Border.all(color: clr.withValues(alpha: 0.5), width: 1.5)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Expanded(
+        child: Row(children: [
+          Icon(isNight ? Icons.nights_stay : Icons.wb_sunny, color: isNight ? const Color(0xFFB39DDB) : const Color(0xFFFFD54F), size: 18), 
+          const SizedBox(width: 8), 
+          Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: Text(txt, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13))))
+        ]),
+      ),
+      const SizedBox(width: 8),
+      Text('${langSvc.t('alive_count')}: ${_controller.players.where((p) => p.isAlive).length}/${_controller.playerCount}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
     ]));
   }
 
@@ -511,19 +743,20 @@ class _PlayScreenState extends State<PlayScreen> {
         } 
       },
       child: Container(decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: border, width: isSelected ? 2.5 : 1)), child: Stack(alignment: Alignment.center, children: [
-        Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text('P${player.id} - ${player.name}', textAlign: TextAlign.center, style: TextStyle(color: textColor, fontSize: 10, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-          const SizedBox(height: 6),
-          Icon(reveal ? player.role.icon : Icons.help_outline, color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), size: 24),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text(langSvc.t(_controller.getPlayerRoleNameDisplay(player)), textAlign: TextAlign.center, style: TextStyle(color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), fontSize: 10, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
-          ),
-        ]),
+        Padding(
+          padding: const EdgeInsets.all(4.0),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            FittedBox(
+              child: Text('P${player.id} - ${player.name}', textAlign: TextAlign.center, style: TextStyle(color: textColor, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 6),
+            Icon(reveal ? player.role.icon : Icons.help_outline, color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), size: 22),
+            const SizedBox(height: 6),
+            FittedBox(
+              child: Text(langSvc.t(_controller.getPlayerRoleNameDisplay(player)), textAlign: TextAlign.center, style: TextStyle(color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+          ]),
+        ),
         if (!player.isAlive) Positioned.fill(child: Container(decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(16)), child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.close, color: Color(0xFFEF5350)), Text(langSvc.t('died_label'), style: const TextStyle(color: Color(0xFFEF5350), fontSize: 10, fontWeight: FontWeight.bold))])))),
         
         _buildSkillIndicators(player),
@@ -612,16 +845,44 @@ class _PlayScreenState extends State<PlayScreen> {
       child: Column(mainAxisSize: MainAxisSize.min, children: [
       Row(children: [_buildTabButton(langSvc.t('chat_tab'), isActive: _showChatTab, onTap: () => setState(() => _showChatTab = true)), _buildTabButton(langSvc.t('log_tab'), isActive: !_showChatTab, onTap: () => setState(() => _showChatTab = false))]),
       const Divider(color: Color(0xFF334155), height: 1),
-      Container(height: 120, padding: const EdgeInsets.all(8), child: _showChatTab ? ListView.builder(itemCount: _controller.chatMessages.length, itemBuilder: (c, i) {
-        final msg = _controller.chatMessages[i]; 
-        if (msg.isWerewolfOnly && !(isWolf ?? false)) {
-          return const SizedBox.shrink();
-        } 
-        if (msg.isGhost && my?.isAlive == true) {
-          return const SizedBox.shrink();
-        }
-        return _buildChatMessageTile(msg);
-      }) : ListView.builder(itemCount: _controller.actionLogs.length, itemBuilder: (c, i) => _buildActionLogTile(_controller.actionLogs[i]))),
+      Container(
+        height: 120, 
+        padding: const EdgeInsets.all(8), 
+        child: _showChatTab ? NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollUpdateNotification) {
+              _shouldAutoScrollChat = _chatScrollController.position.pixels >= _chatScrollController.position.maxScrollExtent - 20;
+            }
+            return false;
+          },
+          child: ListView.builder(
+            controller: _chatScrollController,
+            itemCount: _controller.chatMessages.length, 
+            itemBuilder: (c, i) {
+              final msg = _controller.chatMessages[i]; 
+              if (msg.isWerewolfOnly && !(isWolf ?? false)) {
+                return const SizedBox.shrink();
+              } 
+              if (msg.isGhost && my?.isAlive == true) {
+                return const SizedBox.shrink();
+              }
+              return _buildChatMessageTile(msg);
+            }
+          ),
+        ) : NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollUpdateNotification) {
+              _shouldAutoScrollLog = _logScrollController.position.pixels >= _logScrollController.position.maxScrollExtent - 20;
+            }
+            return false;
+          },
+          child: ListView.builder(
+            controller: _logScrollController,
+            itemCount: _controller.actionLogs.length, 
+            itemBuilder: (c, i) => _buildActionLogTile(_controller.actionLogs[i])
+          ),
+        )
+      ),
       if (_showChatTab) Padding(padding: const EdgeInsets.all(6), child: Row(children: [
         Expanded(child: SizedBox(height: 38, child: TextField(controller: _chatController, enabled: !_controller.isChatDisabled(), style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12), decoration: InputDecoration(hintText: _controller.getChatHintText(), hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black45), filled: true, fillColor: isLobby ? Colors.white.withValues(alpha: 0.1) : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)), onSubmitted: (v) { _controller.sendUserMessage(v); _chatController.clear(); }))),
         const SizedBox(width: 6),
@@ -635,14 +896,19 @@ class _PlayScreenState extends State<PlayScreen> {
     final isNight = _controller.currentPhase == GamePhase.night;
     final isDark = isLobby || isNight;
     final isMe = msg.senderName == _controller.userName;
-    final displayName = isMe ? '${msg.senderName} (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})' : msg.senderName;
+    
+    // Nếu là tin nhắn hệ thống, thực hiện dịch tên người gửi và nội dung
+    final senderNameDisplay = msg.isSystem ? langSvc.t(msg.senderName) : msg.senderName;
+    final contentDisplay = msg.isSystem ? langSvc.t(msg.content) : msg.content;
+    
+    final displayName = isMe ? '$senderNameDisplay (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})' : senderNameDisplay;
     
     Color clr = msg.isSystem ? (isDark ? const Color(0xFFFFD54F) : const Color(0xFFB45309)) : (msg.isWerewolfOnly ? Colors.red : (msg.isGhost ? Colors.grey : (isMe ? (isDark ? Colors.green : const Color(0xFF15803D)) : (isDark ? Colors.white70 : const Color(0xFF0F172A)))));
     return Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: RichText(text: TextSpan(children: [
       if (msg.isWerewolfOnly) const TextSpan(text: '[SÓI] ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 11)),
       if (msg.isGhost) const TextSpan(text: '[MA 👻] ', style: TextStyle(color: Colors.grey, fontSize: 11)),
       TextSpan(text: '$displayName: ', style: TextStyle(color: clr, fontWeight: FontWeight.bold, fontSize: 11.5)),
-      TextSpan(text: msg.content, style: TextStyle(color: msg.isGhost ? Colors.grey : (isDark ? Colors.white70 : const Color(0xFF334155)), fontSize: 11.5)),
+      TextSpan(text: contentDisplay, style: TextStyle(color: msg.isGhost ? Colors.grey : (isDark ? Colors.white70 : const Color(0xFF334155)), fontSize: 11.5)),
     ])));
   }
 
@@ -682,11 +948,86 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   void _showOnlineRulesDialog() {
-    showModalBottomSheet(context: context, backgroundColor: const Color(0xFF1E293B), builder: (c) => Container(padding: const EdgeInsets.all(20), child: ListView.separated(itemCount: _controller.roleDefinitions.length, separatorBuilder: (c, i) => const Divider(color: Colors.white10), itemBuilder: (c, i) => _buildRoleRuleTile(_controller.roleDefinitions[i]))));
+    showModalBottomSheet(
+      context: context, 
+      backgroundColor: const Color(0xFF1E293B),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (c) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 20),
+              Text(langSvc.t('help_title').toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              const SizedBox(height: 24),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  children: [
+                    Text(langSvc.t('help_intro_title').toUpperCase(), style: const TextStyle(color: Color(0xFFFFD54F), fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1.1)),
+                    const SizedBox(height: 12),
+                    Text(langSvc.t('help_intro_content'), style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5)),
+                    const SizedBox(height: 32),
+                    Text(langSvc.t('help_mechanic_title').toUpperCase(), style: const TextStyle(color: Color(0xFFFFD54F), fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1.1)),
+                    const SizedBox(height: 12),
+                    Text(langSvc.t('help_mechanic_content'), style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5)),
+                    const SizedBox(height: 32),
+                    Text(langSvc.t('help_roles_title').toUpperCase(), style: const TextStyle(color: Color(0xFFFFD54F), fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1.1)),
+                    const SizedBox(height: 8),
+                    const Divider(color: Colors.white10),
+                    ..._controller.roleDefinitions.map((role) => _buildRoleRuleTile(role)),
+                    const SizedBox(height: 40),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildRoleRuleTile(RoleDefinition role) {
-    return Row(children: [Icon(role.icon, color: role.secondaryColor), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(langSvc.t(role.name), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), Text(langSvc.t(role.description), style: const TextStyle(color: Colors.white70, fontSize: 12))]))]);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(role.icon, color: role.secondaryColor, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, 
+              children: [
+                Text(
+                  langSvc.t(role.name), 
+                  style: TextStyle(color: role.secondaryColor, fontWeight: FontWeight.bold, fontSize: 16)
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  langSvc.t(role.description), 
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4)
+                ),
+              ]
+            ),
+          ),
+        ]
+      ),
+    );
   }
 
   Widget _buildBottomOnlineController() {
@@ -698,31 +1039,43 @@ class _PlayScreenState extends State<PlayScreen> {
     
     final barColor = isNight ? const Color(0xFF1E293B) : const Color(0xFF0369A1);
     
-    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: barColor, borderRadius: const BorderRadius.vertical(top: Radius.circular(20))), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Row(children: [
-        _buildMyRoleSummaryTile(), 
-        const SizedBox(width: 8), 
-        Expanded(child: Text(
-          isHunterTriggered ? langSvc.t('instruction_hunter') : (isDead ? langSvc.t('you_died') : _controller.getActionInstructionText()), 
-          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold), 
-          textAlign: TextAlign.center
-        ))
-      ]),
-      const SizedBox(height: 10),
-      Row(children: [
-        if (isDead && !isHunterTriggered) ...[
-          Expanded(child: ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(), 
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red), 
-            child: Text(langSvc.t('exit_room'), style: const TextStyle(color: Colors.white))
-          )),
-        ],
-        
-        if ((!isDead || isHunterTriggered) && _controller.selectedPlayer != null) ...[
-          Expanded(child: _buildSkillActionButton()),
-        ],
-      ]),
-    ]));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12), 
+      decoration: BoxDecoration(color: barColor, borderRadius: const BorderRadius.vertical(top: Radius.circular(20))), 
+      child: SafeArea(
+        top: false,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(children: [
+            _buildMyRoleSummaryTile(), 
+            const SizedBox(width: 8), 
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  isHunterTriggered ? langSvc.t('instruction_hunter') : (isDead ? langSvc.t('you_died') : _controller.getActionInstructionText()), 
+                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold), 
+                  textAlign: TextAlign.center
+                ),
+              ),
+            )
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            if (isDead && !isHunterTriggered) ...[
+              Expanded(child: ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(), 
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(vertical: 12)), 
+                child: FittedBox(child: Text(langSvc.t('exit_room'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)))
+              )),
+            ],
+            
+            if ((!isDead || isHunterTriggered) && _controller.selectedPlayer != null) ...[
+              Expanded(child: _buildSkillActionButton()),
+            ],
+          ]),
+        ]),
+      )
+    );
   }
 
   Widget _buildMyRoleSummaryTile() {
