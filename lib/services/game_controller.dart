@@ -305,7 +305,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     } else if (currentPhase == GamePhase.day) {
       next = 'voting'; duration = 15;
     } else {
-      next = 'night'; duration = 30;
+      next = 'night'; duration = 15;
     }
     firestoreSvc.secureNextPhase(roomCode, phaseNumber, next, duration);
   }
@@ -626,16 +626,26 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     actionLogs = ['Hệ thống: Đã vào phòng $roomCode'];
   }
 
-  void sendUserMessage(String text) {
+  void sendUserMessage(String text, {bool forceWerewolfOnly = false}) {
     if (text.trim().isEmpty) return;
-    final isWolfChannel = currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf;
+    
+    // Nếu forceWerewolfOnly = true hoặc đang trong đêm và là Sói
+    final isWolfChannel = forceWerewolfOnly || (currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf);
     final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
+    
     if (roomCode.isEmpty) {
       chatMessages.add(ChatMessage(senderName: userName, content: text, isWerewolfOnly: isWolfChannel, isGhost: isGhost, time: DateTime.now()));
       simulateBotChatResponse(text);
       notifyListeners();
     } else {
-      firestoreSvc.sendChatMessage(roomCode, {'senderName': userName, 'content': text, 'isWerewolfOnly': isWolfChannel, 'isGhost': isGhost, 'isSystem': false, 'time': Timestamp.now()});
+      firestoreSvc.sendChatMessage(roomCode, {
+        'senderName': userName, 
+        'content': text, 
+        'isWerewolfOnly': isWolfChannel, 
+        'isGhost': isGhost, 
+        'isSystem': false, 
+        'time': Timestamp.now()
+      });
     }
   }
 

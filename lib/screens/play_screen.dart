@@ -24,7 +24,7 @@ class _PlayScreenState extends State<PlayScreen> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _logScrollController = ScrollController();
-  bool _showChatTab = true;
+  int _selectedChatTab = 0; // 0: Làng, 1: Sói, 2: Nhật ký
   bool _isGameOverDialogShowing = false;
   bool _shouldAutoScrollChat = true;
   bool _shouldAutoScrollLog = true;
@@ -67,13 +67,13 @@ class _PlayScreenState extends State<PlayScreen> {
 
   void _autoScrollIfNeeded() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_showChatTab && _shouldAutoScrollChat && _chatScrollController.hasClients) {
+      if (_selectedChatTab != 2 && _shouldAutoScrollChat && _chatScrollController.hasClients) {
         _chatScrollController.animateTo(
           _chatScrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
-      } else if (!_showChatTab && _shouldAutoScrollLog && _logScrollController.hasClients) {
+      } else if (_selectedChatTab == 2 && _shouldAutoScrollLog && _logScrollController.hasClients) {
         _logScrollController.animateTo(
           _logScrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 200),
@@ -898,12 +898,17 @@ class _PlayScreenState extends State<PlayScreen> {
         ]
       ), 
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Row(children: [_buildTabButton(langSvc.t('chat_tab'), isActive: _showChatTab, onTap: () => setState(() => _showChatTab = true)), _buildTabButton(langSvc.t('log_tab'), isActive: !_showChatTab, onTap: () => setState(() => _showChatTab = false))]),
+      Row(children: [
+        _buildTabButton(langSvc.currentLanguage == AppLanguage.vi ? 'Làng' : 'Village', isActive: _selectedChatTab == 0, onTap: () => setState(() => _selectedChatTab = 0)), 
+        if (isWolf && !isLobby) 
+          _buildTabButton(langSvc.currentLanguage == AppLanguage.vi ? 'Sói' : 'Wolves', isActive: _selectedChatTab == 1, onTap: () => setState(() => _selectedChatTab = 1)),
+        _buildTabButton(langSvc.t('log_tab'), isActive: _selectedChatTab == 2, onTap: () => setState(() => _selectedChatTab = 2))
+      ]),
       const Divider(color: Color(0xFF334155), height: 1),
       Container(
         height: 120, 
         padding: const EdgeInsets.all(8), 
-        child: _showChatTab ? NotificationListener<ScrollNotification>(
+        child: _selectedChatTab != 2 ? NotificationListener<ScrollNotification>(
           onNotification: (notification) {
             if (notification is ScrollUpdateNotification) {
               _shouldAutoScrollChat = _chatScrollController.position.pixels >= _chatScrollController.position.maxScrollExtent - 20;
@@ -915,9 +920,16 @@ class _PlayScreenState extends State<PlayScreen> {
             itemCount: _controller.chatMessages.length, 
             itemBuilder: (c, i) {
               final msg = _controller.chatMessages[i]; 
-              if (msg.isWerewolfOnly && isWolf == false) {
-                return const SizedBox.shrink();
-              } 
+              
+              // Lọc tin nhắn dựa trên Tab được chọn
+              if (_selectedChatTab == 1) {
+                // Tab Sói: Chỉ hiện tin nhắn Sói
+                if (!msg.isWerewolfOnly) return const SizedBox.shrink();
+              } else {
+                // Tab Làng: Hiện tin nhắn chung, giấu tin nhắn Sói (trừ khi là System)
+                if (msg.isWerewolfOnly && !msg.isSystem) return const SizedBox.shrink();
+              }
+
               if (msg.isGhost && my?.isAlive == true) {
                 return const SizedBox.shrink();
               }
@@ -938,10 +950,35 @@ class _PlayScreenState extends State<PlayScreen> {
           ),
         )
       ),
-      if (_showChatTab) Padding(padding: const EdgeInsets.all(6), child: Row(children: [
-        Expanded(child: SizedBox(height: 38, child: TextField(controller: _chatController, enabled: !_controller.isChatDisabled(), style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12), decoration: InputDecoration(hintText: _controller.getChatHintText(), hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black45), filled: true, fillColor: isLobby ? Colors.white.withValues(alpha: 0.1) : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)), onSubmitted: (v) { _controller.sendUserMessage(v); _chatController.clear(); }))),
+      if (_selectedChatTab != 2) Padding(padding: const EdgeInsets.all(6), child: Row(children: [
+        Expanded(child: SizedBox(height: 38, child: TextField(
+          controller: _chatController, 
+          enabled: !_controller.isChatDisabled() || _selectedChatTab == 1, 
+          style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12), 
+          decoration: InputDecoration(
+            hintText: _selectedChatTab == 1 ? (langSvc.currentLanguage == AppLanguage.vi ? 'Chat riêng với Sói...' : 'Chat with wolves...') : _controller.getChatHintText(), 
+            hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black45), 
+            filled: true, 
+            fillColor: isLobby ? Colors.white.withValues(alpha: 0.1) : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)), 
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)
+          ), 
+          onSubmitted: (v) { 
+            _controller.sendUserMessage(v, forceWerewolfOnly: _selectedChatTab == 1); 
+            _chatController.clear(); 
+          }
+        ))),
         const SizedBox(width: 6),
-        CircleAvatar(radius: 18, backgroundColor: _controller.isChatDisabled() ? Colors.grey : (isLobby ? Colors.white : const Color(0xFFFFD54F)), child: IconButton(icon: Icon(Icons.send, size: 14, color: isLobby ? const Color(0xFF0288D1) : Colors.black), onPressed: _controller.isChatDisabled() ? null : () { _controller.sendUserMessage(_chatController.text); _chatController.clear(); })),
+        CircleAvatar(
+          radius: 18, 
+          backgroundColor: (_controller.isChatDisabled() && _selectedChatTab == 0) ? Colors.grey : (isLobby ? Colors.white : const Color(0xFFFFD54F)), 
+          child: IconButton(
+            icon: Icon(Icons.send, size: 14, color: isLobby ? const Color(0xFF0288D1) : Colors.black), 
+            onPressed: (_controller.isChatDisabled() && _selectedChatTab == 0) ? null : () { 
+              _controller.sendUserMessage(_chatController.text, forceWerewolfOnly: _selectedChatTab == 1); 
+              _chatController.clear(); 
+            }
+          )
+        ),
       ])),
     ]));
   }
