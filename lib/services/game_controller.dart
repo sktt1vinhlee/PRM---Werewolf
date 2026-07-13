@@ -160,7 +160,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.detached) {
       if (roomCode.isNotEmpty) {
         firestoreSvc.leaveRoom(roomCode, userName);
       }
