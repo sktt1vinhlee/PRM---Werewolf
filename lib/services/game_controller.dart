@@ -25,6 +25,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   bool isLobbyLoading = false;
   int dayNumber = 1;
   int phaseNumber = 0;
+  bool isRoomLocked = false;
 
   List<OnlinePlayer> players = [];
   List<String> lobbyPlayerNames = [];
@@ -196,6 +197,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         dayNumber = data['dayNumber'] ?? dayNumber;
         phaseNumber = serverPhaseNumber;
         cursedPlayerId = data['cursedPlayerId'];
+        
+        if (data.containsKey('isPublic')) {
+          isRoomLocked = !(data['isPublic'] as bool);
+        }
 
         // ĐỒNG BỘ THỜI GIAN: Chỉ reset timer nếu thời gian kết thúc trên server thay đổi
         if (data['phaseEndTime'] != null) {
@@ -413,7 +418,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     lobbyPlayerNames = [userName];
     notifyListeners();
     try {
-      await firestoreSvc.createRoom(roomCode, userName, playerCount);
+      await firestoreSvc.createRoom(roomCode, userName, playerCount, isPublic: !isRoomLocked);
       listenToRoom(roomCode);
       _startHeartbeat(); // Bắt đầu heartbeat khi tạo phòng
       _startZombieDetection(); // Bắt đầu phát hiện Zombie
@@ -450,8 +455,20 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       _heartbeatTimer = null;
       roomCode = '';
       currentState = PlayState.setup;
+      isRoomLocked = false; // Reset lock state when leaving room
       notifyListeners();
       firestoreSvc.leaveRoom(codeToLeave, userName).catchError((e) => debugPrint(e.toString()));
+    }
+  }
+
+  void toggleRoomLock(bool locked) {
+    isRoomLocked = locked;
+    notifyListeners();
+    if (roomCode.isNotEmpty && currentState == PlayState.lobby) {
+      final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+      if (isHost) {
+        firestoreSvc.updateRoomData(roomCode, {'isPublic': !locked});
+      }
     }
   }
 
@@ -666,6 +683,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     _localLastSeenMap.clear();
     _currentHostName = null;
     currentState = PlayState.lobby;
+    isRoomLocked = false;
     selectedPlayer = null;
     players = [];
     isNerdHanged = false;

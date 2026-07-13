@@ -288,7 +288,19 @@ class _PlayScreenState extends State<PlayScreen> {
         _buildLobbyPlayerCountCard(), const SizedBox(height: 40),
         Text('${langSvc.t('settings')}:', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        Text(langSvc.t('developing'), style: const TextStyle(color: Colors.white70, fontSize: 13)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(langSvc.currentLanguage == AppLanguage.vi ? 'Phòng riêng tư (Khóa)' : 'Private Room (Locked)', style: const TextStyle(color: Colors.white70, fontSize: 15)),
+            Switch(
+              value: _controller.isRoomLocked,
+              onChanged: (val) {
+                _controller.toggleRoomLock(val);
+              },
+              activeColor: const Color(0xFFFFD54F),
+            ),
+          ],
+        ),
       ]))),
       Padding(
         padding: const EdgeInsets.all(16), 
@@ -316,36 +328,66 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildRoomCodeCard() {
-    return GestureDetector(
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: _controller.roomCode));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${langSvc.t('room_code_label')} ${_controller.roomCode} ${langSvc.currentLanguage == AppLanguage.vi ? "đã được sao chép!" : "copied to clipboard!"}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF0288D1),
-            duration: const Duration(seconds: 2),
+    final isHost = _controller.lobbyPlayerNames.isNotEmpty && _controller.lobbyPlayerNames[0] == _controller.userName;
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: _controller.roomCode));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${langSvc.t('room_code_label')} ${_controller.roomCode} ${langSvc.currentLanguage == AppLanguage.vi ? "đã được sao chép!" : "copied to clipboard!"}'),
+                behavior: SnackBarBehavior.floating,
+                backgroundColor: const Color(0xFF0288D1),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16), 
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2), 
+              borderRadius: BorderRadius.circular(16), 
+              border: Border.all(color: Colors.white30)
+            ), 
+            child: Row(
+              children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(langSvc.t('room_code_label'), style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+                  FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(_controller.roomCode, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
+                ])),
+                const SizedBox(width: 12),
+                const Icon(Icons.copy, color: Colors.white70, size: 20),
+              ]
+            )
           ),
-        );
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16), 
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.2), 
-          borderRadius: BorderRadius.circular(16), 
-          border: Border.all(color: Colors.white30)
-        ), 
-        child: Row(
-          children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(langSvc.t('room_code_label'), style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(_controller.roomCode, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
-            ])),
-            const SizedBox(width: 12),
-            const Icon(Icons.copy, color: Colors.white70, size: 20),
-          ]
-        )
-      ),
+        ),
+        if (isHost) ...[
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(langSvc.currentLanguage == AppLanguage.vi ? 'Khóa phòng (Không ghép nhanh)' : 'Lock Room (No quick match)', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(width: 8),
+              Switch(
+                value: _controller.isRoomLocked,
+                onChanged: (val) => _controller.toggleRoomLock(val),
+                activeColor: const Color(0xFFFFD54F),
+              ),
+            ],
+          ),
+        ] else ...[
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Icon(_controller.isRoomLocked ? Icons.lock : Icons.lock_open, color: Colors.white70, size: 14),
+              const SizedBox(width: 4),
+              Text(_controller.isRoomLocked ? (langSvc.currentLanguage == AppLanguage.vi ? 'Phòng đã khóa' : 'Room Locked') : (langSvc.currentLanguage == AppLanguage.vi ? 'Phòng công khai' : 'Public Room'), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
