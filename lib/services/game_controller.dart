@@ -169,15 +169,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Trên web, trình duyệt có thể đưa tab vào trạng thái detached/paused khi không focus.
-    // Tạm thời tắt tự động rời phòng để tránh việc bị xóa khỏi Firestore và văng ra màn hình chính.
-    /*
-    if (state == AppLifecycleState.detached) {
-      if (roomCode.isNotEmpty) {
-        firestoreSvc.leaveRoom(roomCode, userName);
-      }
+    if (state == AppLifecycleState.resumed) {
+      // Khi quay lại tab/app, ngay lập tức gửi tín hiệu active
+      _updateActivity();
     }
-    */
   }
 
   int _lastProcessedPhaseNumber = -1;
@@ -495,7 +490,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         for (var pName in lobbyPlayerNames) {
           if (pName == userName) continue;
           final lastSeen = _localLastSeenMap[pName];
-          if (lastSeen != null && now.difference(lastSeen).inSeconds > 45) {
+          if (lastSeen != null && now.difference(lastSeen).inSeconds > 120) {
             if (currentState == PlayState.lobby) {
               // Kick người chơi khỏi phòng nếu đang ở sảnh
               firestoreSvc.leaveRoom(roomCode, pName);
@@ -518,7 +513,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
         if (_currentHostName != null) {
           final hostLastSeen = _localLastSeenMap[_currentHostName!];
-          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 45) {
+          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 120) {
              // Host đã chết -> Gọi leaveRoom để buộc server đổi Host (Host Migration)
              firestoreSvc.leaveRoom(roomCode, _currentHostName!);
           }
