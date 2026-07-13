@@ -632,10 +632,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
-        await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
-        
-        currentState = PlayState.lobby;
-        listenToRoom(roomCode);
+        playerCount = 15;
+        isRoomLocked = false;
+        await createRoom();
       }
     } catch (e) {
       debugPrint('Matchmaking error: $e');
