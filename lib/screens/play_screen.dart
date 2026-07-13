@@ -328,7 +328,10 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildRoomCodeCard() {
-    final isHost = _controller.lobbyPlayerNames.isNotEmpty && _controller.lobbyPlayerNames[0] == _controller.userName;
+    // Dùng cùng logic .trim() như _buildLobbyBottomBar, thêm fallback qua myPlayer
+    final isHost = (_controller.lobbyPlayerNames.isNotEmpty &&
+            _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim()) ||
+        (_controller.myPlayer?.isHost == true);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), 
       decoration: BoxDecoration(
