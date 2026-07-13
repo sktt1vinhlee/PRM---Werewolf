@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'screens/intro_screen.dart';
 import 'services/language_service.dart';
@@ -18,6 +19,7 @@ class WerewolfApp extends StatefulWidget {
 
 class _WerewolfAppState extends State<WerewolfApp> {
   bool _initialized = false;
+  String _errorMsg = '';
 
   @override
   void initState() {
@@ -27,9 +29,14 @@ class _WerewolfAppState extends State<WerewolfApp> {
 
   Future<void> _initialize() async {
     try {
+      // 1. Khởi tạo Firebase
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
+
+      // 2. Đăng nhập ẩn danh để có quyền truy cập Firestore (fix lỗi ko đăng nhập được)
+      await FirebaseAuth.instance.signInAnonymously();
+      
       if (mounted) {
         setState(() => _initialized = true);
       }
@@ -37,7 +44,8 @@ class _WerewolfAppState extends State<WerewolfApp> {
       debugPrint('Failed to initialize Firebase: $e');
       if (mounted) {
         setState(() {
-          _initialized = true; // Still proceed, maybe try again or show error later
+          _errorMsg = e.toString();
+          _initialized = true;
         });
       }
     }
