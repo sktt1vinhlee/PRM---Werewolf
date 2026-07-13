@@ -313,11 +313,12 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildLobbyView() {
-    final isMatchmaking = widget.isOnlineQuickMatch;
+    // Đang ghép trọn: isOnlineQuickMatch và chưa có phòng (roomCode rỗng)
+    final isSearchingRoom = widget.isOnlineQuickMatch && _controller.roomCode.isEmpty;
     return Column(children: [
-      _buildTopBar(isMatchmaking ? (langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG GHÉP TRẬN' : 'MATCHMAKING') : langSvc.t('lobby_title'), showInfo: true),
+      _buildTopBar(isSearchingRoom ? (langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG GHÉP TRẬN' : 'MATCHMAKING') : langSvc.t('lobby_title'), showInfo: true),
       Expanded(child: SingleChildScrollView(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (!isMatchmaking) ...[
+        if (!isSearchingRoom) ...[
           _buildRoomCodeCard(), 
           const SizedBox(height: 16),
         ],
@@ -566,8 +567,9 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildLobbyBottomBar() {
-    final isMatchmaking = widget.isOnlineQuickMatch;
-    if (isMatchmaking) {
+    // Khi isOnlineQuickMatch và chưa có phòng: hiển thị đang tìm
+    final isSearchingRoom = widget.isOnlineQuickMatch && _controller.roomCode.isEmpty;
+    if (isSearchingRoom) {
       return Container(
         padding: const EdgeInsets.all(16), 
         child: Container(

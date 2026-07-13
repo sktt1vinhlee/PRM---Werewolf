@@ -626,16 +626,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       // THUẬT TOÁN GHÉP TRẬN TỐI ƯU:
-      // Thử tìm phòng trong 6 vòng với tốc độ nhanh (mỗi 1.5s)
-      // Điều này giúp người dùng "hội quân" vào phòng đông nhất cực nhanh.
-      for (int attempt = 0; attempt < 6; attempt++) {
-        // Delay ngẫu nhiên ngắn (200-500ms) ở vòng đầu để phân cấp máy khách nào sẽ là người tạo phòng
-        int initialJitter = (attempt == 0) ? Random().nextInt(500) : 0;
-        await Future.delayed(Duration(milliseconds: 1500 + initialJitter));
+      // Vòng 1: Tìm ngay lập tức (không delay) để vào phòng có sẵn nhanh nhất.
+      // Các vòng sau: Delay 1s mỗi vòng. Tổng cộng 8 vòng (~8 giây) trước khi tạo phòng mới.
+      for (int attempt = 0; attempt < 8; attempt++) {
+        // Chỉ delay từ vòng 2 trở đi. Vòng đầu tìm ngay.
+        if (attempt > 0) {
+          // Delay ngẫu nhiên 800-1200ms để tránh race condition khi nhiều client cùng tạo phòng
+          int jitter = 800 + Random().nextInt(400);
+          await Future.delayed(Duration(milliseconds: jitter));
+        }
 
         if (currentState != PlayState.matchmaking) return;
 
-        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1})...');
+        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1}/8)...');
         String? foundRoomCode;
         try {
           foundRoomCode = await firestoreSvc.findPublicRoom();
@@ -654,7 +657,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
 
-      // Nếu sau ~10 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
+      // Nếu sau ~8 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
       if (currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
@@ -831,9 +834,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
     
     if (roomCode.isEmpty) {
+      // OFFLINE: Thêm tin nhắn local và giả lập phản hồi bot
       chatMessages.add(ChatMessage(senderName: userName, content: text, isWerewolfOnly: isWolfChannel, isGhost: isGhost, time: DateTime.now()));
       simulateBotChatResponse(text);
       notifyListeners();
+    } else {
+      // ONLINE: Gửi lên Firestore (stream sẽ tự cập nhật lại chatMessages)
       firestoreSvc.sendChatMessage(roomCode, {
         'senderName': userName, 
         'content': text, 

@@ -465,6 +465,17 @@ class FirestoreService {
       debugPrint('Error in setHunterSkillActive: $e');
     }
   }
+
+  /// Cập nhật trạng thái công khai/riêng tư của phòng
+  Future<void> updateRoomPrivacy(String roomCode, bool isPublic) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'isPublic': isPublic,
+      });
+    } catch (e) {
+      debugPrint('Error updating room privacy: $e');
+    }
+  }
 }
 
 final firestoreSvc = FirestoreService();
