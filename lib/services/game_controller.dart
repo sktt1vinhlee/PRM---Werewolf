@@ -32,6 +32,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _phaseTimer;
   Timer? botChatTimer;
   StreamSubscription? _roomSubscription;
+  Timestamp? _lastSyncedEndTime;
 
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
@@ -161,6 +162,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  int _lastProcessedPhaseNumber = -1;
+
   void listenToRoom(String code) {
     _roomSubscription?.cancel();
     _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
@@ -173,20 +176,26 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (data != null) {
         final List playersData = data['players'] ?? [];
         final List messagesData = data['messages'] ?? [];
+        final int serverPhaseNumber = data['phaseNumber'] ?? 0;
         
         lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
         playerCount = data['playerCount'] ?? playerCount;
         dayNumber = data['dayNumber'] ?? dayNumber;
-        phaseNumber = data['phaseNumber'] ?? 0;
+        phaseNumber = serverPhaseNumber;
         cursedPlayerId = data['cursedPlayerId'];
 
+        // ĐỒNG BỘ THỜI GIAN: Chỉ reset timer nếu thời gian kết thúc trên server thay đổi
         if (data['phaseEndTime'] != null) {
-          final Timestamp endTime = data['phaseEndTime'];
-          final remaining = endTime.toDate().difference(DateTime.now()).inSeconds;
-          phaseTimerSeconds = remaining > 0 ? remaining : 0;
-          _startLocalVisualTimer();
+          final Timestamp serverEndTime = data['phaseEndTime'];
+          if (_lastSyncedEndTime == null || serverEndTime != _lastSyncedEndTime) {
+            _lastSyncedEndTime = serverEndTime;
+            final remaining = serverEndTime.toDate().difference(DateTime.now()).inSeconds;
+            phaseTimerSeconds = remaining > 0 ? remaining : 0;
+            _startLocalVisualTimer();
+          }
         }
 
+        // CẬP NHẬT TRẠNG THÁI NGƯỜI CHƠI TỪ FIREBASE
         if (playersData.isNotEmpty && currentState == PlayState.playing) {
           for (int i = 0; i < players.length; i++) {
             final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
@@ -198,10 +207,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
 
+        // CHUYỂN GIAI ĐOẠN: Chỉ xử lý nếu phaseNumber mới lớn hơn cái cũ
         if (data['currentPhase'] != null) {
           final newPhase = GamePhase.values.firstWhere((e) => e.name == data['currentPhase'], orElse: () => currentPhase);
-          if (newPhase != currentPhase && currentState == PlayState.playing) {
+          if (serverPhaseNumber > _lastProcessedPhaseNumber && currentState == PlayState.playing) {
+            _lastProcessedPhaseNumber = serverPhaseNumber;
             _handlePhaseTransitionFromServer(newPhase);
+          } else {
+            currentPhase = newPhase; // Cập nhật phase hiện tại nhưng không xử lý logic transition
           }
         }
 
@@ -309,29 +322,32 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handlePhaseTransitionFromServer(GamePhase newPhase) {
     final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+    
+    // Đảm bảo cập nhật phase locally trước bất kỳ tác vụ nào khác để tránh ghi đè dữ liệu cũ
+    currentPhase = newPhase;
+
     if (newPhase == GamePhase.day) {
       if (roomCode.isEmpty || isHost) {
         _processNightResults();
-        if (roomCode.isNotEmpty) syncGameState();
+        // Online: Không gọi syncGameState() ở đây vì server transaction đã cập nhật Firestore rồi
       } else {
         _resetLocalNightStates();
       }
     } else if (newPhase == GamePhase.voting) {
       if (roomCode.isEmpty || isHost) {
         _processDayResults();
-        if (roomCode.isNotEmpty) syncGameState();
+        // Online: Không gọi syncGameState() ở đây
       } else {
         _resetLocalDayStates();
       }
     } else if (newPhase == GamePhase.night) {
       if (roomCode.isEmpty || isHost) {
         _processVotingResults();
-        if (roomCode.isNotEmpty) syncGameState();
+        // Online: Không gọi syncGameState() ở đây
       } else {
         _resetLocalVotingStates();
       }
     }
-    currentPhase = newPhase;
     notifyListeners();
   }
 
@@ -441,31 +457,28 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     try {
-      // Thử tối đa 3 lần để tìm và gia nhập phòng có sẵn
-      for (int attempt = 0; attempt < 3; attempt++) {
-        // Jitter ngẫu nhiên (0-500ms) để các máy khách không dẫm chân nhau
-        await Future.delayed(Duration(milliseconds: Random().nextInt(500)));
+      // Tăng số lần thử và giãn cách thời gian để các client dễ tìm thấy nhau hơn
+      for (int attempt = 0; attempt < 5; attempt++) {
+        // Delay tăng dần + jitter để tránh việc nhiều máy cùng tạo phòng một lúc
+        // Vòng lặp đầu đợi ngắn, các vòng sau đợi lâu hơn để nhường máy khác tạo phòng
+        int delay = 500 + (attempt * 1200) + Random().nextInt(1000);
+        await Future.delayed(Duration(milliseconds: delay));
 
-        // 1. Tìm phòng công khai đang chờ, ưu tiên phòng đông người nhất
+        // Tìm phòng công khai đang chờ
         String? foundRoomCode = await firestoreSvc.findPublicRoom();
 
         if (foundRoomCode != null) {
           try {
             await joinExistingRoom(foundRoomCode, userName);
-            // Gia nhập thành công -> Kết thúc
-            return;
+            return; // Gia nhập thành công
           } catch (e) {
-            // Nếu lỗi (phòng vừa đầy hoặc bị xóa), tiếp tục vòng lặp để tìm phòng khác
-            debugPrint('Attempt $attempt: Room $foundRoomCode full or busy, retrying...');
+            debugPrint('Attempt $attempt: Room $foundRoomCode busy or full, retrying...');
             continue;
           }
         }
-        
-        // Nếu không thấy phòng nào ở lượt đầu, đợi thêm 1 chút ở lượt sau
-        if (attempt < 2) await Future.delayed(const Duration(milliseconds: 300));
       }
 
-      // 2. Nếu sau các lần thử vẫn không có phòng phù hợp, mới tiến hành tạo phòng mới
+      // Nếu sau 5 lần thử (~8-10 giây) vẫn không thấy phòng, mới tạo phòng mới
       generateRoomCode();
       await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
       
@@ -756,6 +769,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasUsedPoisonThisNight = false;
     cursedPlayerId = null;
     selectedPlayer = null;
+    werewolfTarget = null;
   }
 
   void _resetLocalDayStates() {

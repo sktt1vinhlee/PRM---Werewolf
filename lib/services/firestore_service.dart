@@ -291,15 +291,25 @@ class FirestoreService {
   /// Tìm phòng ghép trận Online
   Future<String?> findPublicRoom() async {
     try {
+      // Loại bỏ orderBy để tránh yêu cầu composite index phức tạp, thực hiện sort trong memory
       final snapshot = await _db
           .collection('rooms')
           .where('isPublic', isEqualTo: true)
           .where('status', isEqualTo: 'waiting')
-          .orderBy('currentPlayersCount', descending: true)
-          .limit(5)
+          .limit(10) // Lấy một danh sách nhỏ để chọn phòng tốt nhất
           .get();
 
-      for (var doc in snapshot.docs) {
+      if (snapshot.docs.isEmpty) return null;
+
+      // Sắp xếp trong memory: ưu tiên phòng đông người hơn để nhanh đủ người chơi
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs = snapshot.docs.toList();
+      docs.sort((a, b) {
+        int countA = a.data()['currentPlayersCount'] ?? 0;
+        int countB = b.data()['currentPlayersCount'] ?? 0;
+        return countB.compareTo(countA);
+      });
+
+      for (var doc in docs) {
         final data = doc.data();
         int current = data['currentPlayersCount'] ?? 0;
         int limit = data['playerCount'] ?? 15;
