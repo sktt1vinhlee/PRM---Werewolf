@@ -18,7 +18,6 @@ class WerewolfApp extends StatefulWidget {
 
 class _WerewolfAppState extends State<WerewolfApp> {
   bool _initialized = false;
-  String? _error;
 
   @override
   void initState() {
@@ -31,13 +30,16 @@ class _WerewolfAppState extends State<WerewolfApp> {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
-      setState(() => _initialized = true);
+      if (mounted) {
+        setState(() => _initialized = true);
+      }
     } catch (e) {
       debugPrint('Failed to initialize Firebase: $e');
-      setState(() {
-        _initialized = true; // Still proceed, maybe try again or show error later
-        _error = e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _initialized = true; // Still proceed, maybe try again or show error later
+        });
+      }
     }
   }
 
@@ -92,7 +94,7 @@ class _WerewolfAppState extends State<WerewolfApp> {
                   decoration: BoxDecoration(
                     gradient: RadialGradient(
                       colors: [
-                        const Color(0xFFEF5350).withOpacity(0.8),
+                        const Color(0xFFEF5350).withValues(alpha: 0.8),
                         Colors.transparent,
                       ],
                       stops: const [0.2, 1.0],
@@ -100,7 +102,7 @@ class _WerewolfAppState extends State<WerewolfApp> {
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFFEF5350).withOpacity(0.4),
+                        color: const Color(0xFFEF5350).withValues(alpha: 0.4),
                         blurRadius: 40,
                         spreadRadius: 5,
                       )

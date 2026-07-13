@@ -343,8 +343,9 @@ class MainMenuScreen extends StatelessWidget {
                       if (exists) {
                         await firestoreSvc.joinRoom(code, name);
                         if (context.mounted) {
-                          Navigator.pop(context);
-                          Navigator.push(context, MaterialPageRoute(builder: (context) => PlayScreen(roomCode: code, userName: name)));
+                          final nav = Navigator.of(context);
+                          nav.pop();
+                          nav.push(MaterialPageRoute(builder: (context) => PlayScreen(roomCode: code, userName: name)));
                         }
                       } else {
                         if (context.mounted) {

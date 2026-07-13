@@ -217,9 +217,10 @@ class _PlayScreenState extends State<PlayScreen> {
             if (didPop) {
               return;
             }
+            final nav = Navigator.of(context);
             final shouldPop = await _onWillPop();
-            if (shouldPop && context.mounted) {
-              Navigator.of(context).popUntil((route) => route.isFirst);
+            if (shouldPop && mounted) {
+              nav.popUntil((route) => route.isFirst);
             }
           },
           child: Scaffold(
@@ -686,8 +687,9 @@ class _PlayScreenState extends State<PlayScreen> {
             decoration: BoxDecoration(color: btnBg, shape: BoxShape.circle),
             child: IconButton(
               onPressed: () async { 
-                if (await _onWillPop() && context.mounted) {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+                final nav = Navigator.of(context);
+                if (await _onWillPop() && mounted) {
+                  nav.popUntil((route) => route.isFirst);
                 } 
               }, 
               icon: Icon(Icons.arrow_back_ios_new, color: textColor, size: 18),
@@ -947,7 +949,11 @@ class _PlayScreenState extends State<PlayScreen> {
     
     // Nếu là tin nhắn hệ thống, thực hiện dịch tên người gửi và nội dung
     final senderNameDisplay = msg.isSystem ? langSvc.t(msg.senderName) : msg.senderName;
-    final contentDisplay = msg.isSystem ? langSvc.t(msg.content) : msg.content;
+    String contentDisplay = msg.isSystem ? langSvc.t(msg.content) : msg.content;
+    
+    if (msg.isSystem && msg.targetName != null) {
+      contentDisplay = contentDisplay.replaceFirst('%s', msg.targetName!);
+    }
     
     final displayName = isMe ? '$senderNameDisplay (${langSvc.currentLanguage == AppLanguage.vi ? "Bạn" : "You"})' : senderNameDisplay;
     
@@ -989,8 +995,9 @@ class _PlayScreenState extends State<PlayScreen> {
           decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), shape: BoxShape.circle),
           child: IconButton(
             onPressed: () async {
-              if (await _onWillPop() && context.mounted) {
-                Navigator.of(context).popUntil((route) => route.isFirst);
+              final nav = Navigator.of(context);
+              if (await _onWillPop() && mounted) {
+                nav.popUntil((route) => route.isFirst);
               }
             }, 
             icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),

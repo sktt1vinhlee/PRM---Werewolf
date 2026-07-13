@@ -1,6 +1,7 @@
 class ChatMessage {
   final String senderName;
   final String content;
+  final String? targetName;
   final bool isWerewolfOnly;
   final bool isGhost;
   final bool isSystem;
@@ -9,6 +10,7 @@ class ChatMessage {
   ChatMessage({
     required this.senderName,
     required this.content,
+    this.targetName,
     this.isWerewolfOnly = false,
     this.isGhost = false,
     this.isSystem = false,
