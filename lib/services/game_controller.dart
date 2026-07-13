@@ -36,9 +36,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   int phaseTimerSeconds = 0;
   Timer? _phaseTimer;
   Timer? botChatTimer;
+  Timer? _heartbeatTimer;       // Heartbeat: cập nhật lastSeen định kỳ
+  Timer? _zombieTimer;          // Quét và kick/kill zombie
+  Timer? _hunterTimeoutTimer;   // Timeout cho kỹ năng Thợ Săn
   StreamSubscription? _roomSubscription;
   Timestamp? _lastSyncedEndTime;
   int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
+  
+  // Dữ liệu theo dõi kết nối
+  Map<String, Timestamp> _serverLastSeenMap = {};
+  Map<String, DateTime> _localLastSeenMap = {};
+  String? _currentHostName;
 
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
@@ -206,9 +214,28 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
 
         // CẬP NHẬT TRẠNG THÁI NGƯỜI CHƠI TỪ FIREBASE
-        if (playersData.isNotEmpty && currentState == PlayState.playing) {
-          for (int i = 0; i < players.length; i++) {
-            final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
+        if (playersData.isNotEmpty) {
+          final hostData = playersData.firstWhere((p) => p['isHost'] == true, orElse: () => null);
+          if (hostData != null) {
+            _currentHostName = hostData['name'];
+          }
+
+          for (var pData in playersData) {
+            final String pName = pData['name'];
+            final Timestamp? serverLastSeen = pData['lastSeen'];
+            
+            if (serverLastSeen != null) {
+              final prevServerLastSeen = _serverLastSeenMap[pName];
+              if (prevServerLastSeen == null || prevServerLastSeen != serverLastSeen) {
+                _serverLastSeenMap[pName] = serverLastSeen;
+                _localLastSeenMap[pName] = DateTime.now();
+              }
+            }
+          }
+          
+          if (currentState == PlayState.playing) {
+            for (int i = 0; i < players.length; i++) {
+              final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
             if (pData != null) {
               players[i].isAlive = pData['isAlive'] ?? true;
               players[i].voteCount = pData['voteCount'] ?? 0;
@@ -218,9 +245,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
               players[i].wasProtectedByBodyguard = pData['wasProtectedByBodyguard'] ?? false;
               players[i].wasHealedByWitch = pData['wasHealedByWitch'] ?? false;
               
-              // Cập nhật lại reference cho myPlayer để đảm bảo nhận diện đúng bản thân
-              if (players[i].name == userName) {
-                myPlayer = players[i];
+                if (players[i].name == userName) {
+                  myPlayer = players[i];
+                }
               }
             }
           }
@@ -393,6 +420,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       await firestoreSvc.createRoom(roomCode, userName, playerCount);
       listenToRoom(roomCode);
+      _startHeartbeat(); // Bắt đầu heartbeat khi tạo phòng
+      _startZombieDetection(); // Bắt đầu phát hiện Zombie
     } catch (e) {
       currentState = PlayState.setup;
       notifyListeners();
@@ -406,6 +435,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       userName = name;
       currentState = PlayState.lobby;
       listenToRoom(roomCode);
+      _startHeartbeat(); // Bắt đầu heartbeat khi vào phòng
+      _startZombieDetection(); // Bắt đầu phát hiện Zombie
       notifyListeners();
     } catch (e) {
       rethrow;
@@ -416,11 +447,84 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (roomCode.isNotEmpty) {
       final codeToLeave = roomCode;
       _roomSubscription?.cancel();
+      _heartbeatTimer?.cancel(); // Dừng heartbeat khi rời phòng
+      _zombieTimer?.cancel();
+      _serverLastSeenMap.clear();
+      _localLastSeenMap.clear();
+      _currentHostName = null;
+      _heartbeatTimer = null;
       roomCode = '';
       currentState = PlayState.setup;
       notifyListeners();
       firestoreSvc.leaveRoom(codeToLeave, userName).catchError((e) => debugPrint(e.toString()));
     }
+  }
+
+  /// Bắt đầu gửi heartbeat định kỳ (mỗi 15 giây) lên Firebase
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (roomCode.isNotEmpty && userName.isNotEmpty) {
+        firestoreSvc.updateLastSeen(roomCode, userName);
+      }
+    });
+    // Gửi ngay lần đầu
+    if (roomCode.isNotEmpty && userName.isNotEmpty) {
+      firestoreSvc.updateLastSeen(roomCode, userName);
+    }
+  }
+
+  /// Cập nhật thời gian hoạt động cuối cùng của người chơi
+  void _updateActivity() {
+    if (roomCode.isNotEmpty && userName.isNotEmpty) {
+      firestoreSvc.updateLastSeen(roomCode, userName);
+    }
+  }
+
+  /// Khởi chạy cơ chế phát hiện và xử lý Zombie (mất kết nối)
+  void _startZombieDetection() {
+    _zombieTimer?.cancel();
+    _zombieTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (roomCode.isEmpty) return;
+      
+      final now = DateTime.now();
+      final isHost = _currentHostName == userName;
+
+      if (isHost) {
+        // Chủ phòng kiểm tra tất cả những người khác
+        for (var pName in lobbyPlayerNames) {
+          if (pName == userName) continue;
+          final lastSeen = _localLastSeenMap[pName];
+          if (lastSeen != null && now.difference(lastSeen).inSeconds > 45) {
+            if (currentState == PlayState.lobby) {
+              // Kick người chơi khỏi phòng nếu đang ở sảnh
+              firestoreSvc.leaveRoom(roomCode, pName);
+            } else if (currentState == PlayState.playing) {
+              // Giết người chơi nếu đang trong trận
+              final player = players.firstWhere((p) => p.name == pName, orElse: () => OnlinePlayer(id: -1, name: '', role: roleDefinitions[0]));
+              if (player.id != -1 && player.isAlive) {
+                firestoreSvc.updatePlayerField(roomCode, player.id, {'isAlive': false});
+                firestoreSvc.sendChatMessage(roomCode, {
+                  'senderName': 'system', 
+                  'content': '$pName đã mất kết nối và tử vong.', 
+                  'isSystem': true, 
+                  'time': Timestamp.now()
+                });
+              }
+            }
+          }
+        }
+      } else {
+        // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
+        if (_currentHostName != null) {
+          final hostLastSeen = _localLastSeenMap[_currentHostName!];
+          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 45) {
+             // Host đã chết -> Gọi leaveRoom để buộc server đổi Host (Host Migration)
+             firestoreSvc.leaveRoom(roomCode, _currentHostName!);
+          }
+        }
+      }
+    });
   }
 
   void startQuickMatch({bool isOnline = false}) async {
@@ -562,6 +666,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void resetGame() {
     stopPeriodicBotChat();
     _phaseTimer?.cancel();
+    _zombieTimer?.cancel();
+    _serverLastSeenMap.clear();
+    _localLastSeenMap.clear();
+    _currentHostName = null;
     currentState = PlayState.lobby;
     selectedPlayer = null;
     players = [];
@@ -688,7 +796,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       chatMessages.add(ChatMessage(senderName: userName, content: text, isWerewolfOnly: isWolfChannel, isGhost: isGhost, time: DateTime.now()));
       simulateBotChatResponse(text);
       notifyListeners();
-    } else {
       firestoreSvc.sendChatMessage(roomCode, {
         'senderName': userName, 
         'content': text, 
@@ -698,6 +805,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         'time': Timestamp.now()
       });
     }
+    _updateActivity();
   }
 
   bool isChatDisabled() {
@@ -886,6 +994,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       target.voteCount += weight;
       target.isTargeted = true;
     }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -909,8 +1018,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     // Logic kỹ năng thợ săn
     if (player.role.id == 'tho_san') {
       if (player.id == myPlayer?.id) {
-        hunterSkillTriggered = true;
-        hunterWhoDied = player;
+        if (roomCode.isNotEmpty) {
+          _triggerHunterSkill(player); // Online: kích hoạt và set timeout
+        } else {
+          hunterSkillTriggered = true;
+          hunterWhoDied = player;
+        }
       } else if (roomCode.isEmpty) {
         simulateBotHunterShot(player);
       }
@@ -922,8 +1035,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasUsedSeerScan = true;
     final isW = target.role.team == RoleTeam.werewolf || target.id == cursedPlayerId;
     addLog(langSvc.t('seer_result').replaceFirst('%s', target.name).replaceFirst('%s', isW ? langSvc.t('wolf_red') : langSvc.t('villager_green')));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      // Online: chỉ cập nhật field cục bộ (hasBeenScannedBySeer chỉ lưu local)
+      // Không cần đồng bộ lên server vì chỉ Tiên Tri mới thấy
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -933,8 +1052,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasUsedBodyguardProtect = true;
     lastProtectedPlayerId = target.id;
     addLog(langSvc.t('guard_log').replaceFirst('%s', target.name));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      // Online: dùng Transaction để chỉ cập nhật đúng các field của mục tiêu
+      firestoreSvc.updatePlayerField(roomCode, target.id, {
+        'isProtected': true,
+        'wasProtectedByBodyguard': true,
+      });
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -949,8 +1077,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
     hasHealPotion = false;
     hasUsedHealThisNight = true;
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {
+        'isProtected': target.isAlive ? true : false,
+        'wasHealedByWitch': true,
+      });
+      if (!target.isAlive) {
+        firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
+      }
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -958,8 +1097,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     target.isPoisoned = true;
     hasPoisonPotion = false;
     hasUsedPoisonThisNight = true;
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {'isPoisoned': true});
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -984,6 +1128,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, target.id, weight);
       firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': target.id});
     }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1003,6 +1148,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, -1, weight); // -1 = không ai
       firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': null});
     }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1023,9 +1169,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     lover2 = cupidSelections[1];
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'lover1Id': lover1!.id, 'lover2Id': lover2!.id});
+    } else {
+      syncGameState();
     }
-    syncGameState();
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1033,8 +1181,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = target.id;
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'cursedPlayerId': cursedPlayerId});
+    } else {
+      syncGameState();
     }
-    syncGameState();
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1042,37 +1192,66 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = null;
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'cursedPlayerId': null});
+    } else {
+      syncGameState();
     }
-    syncGameState();
+    _updateActivity();
     notifyListeners();
   }
   
   void cancelBodyguardProtect() {
+    Map<int, Map<String, dynamic>> updates = {};
     for (var p in players) {
       if (p.wasProtectedByBodyguard) {
         p.isProtected = false;
         p.wasProtectedByBodyguard = false;
+        updates[p.id] = {'isProtected': false, 'wasProtectedByBodyguard': false};
       }
     }
     hasUsedBodyguardProtect = false;
     lastProtectedPlayerId = null;
+    if (roomCode.isNotEmpty && updates.isNotEmpty) {
+      firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+    } else if (roomCode.isEmpty) {
+      syncGameState();
+    }
+    _updateActivity();
     notifyListeners();
   }
 
   void cancelWitchAction() {
+    Map<int, Map<String, dynamic>> updates = {};
     if (hasUsedHealThisNight) {
       for (var p in players) {
-        p.wasHealedByWitch = false;
+        if (p.wasHealedByWitch) {
+          p.wasHealedByWitch = false;
+          updates[p.id] = {'wasHealedByWitch': false};
+        }
       }
       hasHealPotion = true;
       hasUsedHealThisNight = false;
+      if (roomCode.isNotEmpty) {
+        if (updates.isNotEmpty) firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+        firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': null});
+      } else {
+        syncGameState();
+      }
     } else if (hasUsedPoisonThisNight) {
       for (var p in players) {
-        p.isPoisoned = false;
+        if (p.isPoisoned) {
+          p.isPoisoned = false;
+          updates[p.id] = {'isPoisoned': false};
+        }
       }
       hasPoisonPotion = true;
       hasUsedPoisonThisNight = false;
+      if (roomCode.isNotEmpty && updates.isNotEmpty) {
+        firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+      } else if (roomCode.isEmpty) {
+        syncGameState();
+      }
     }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1081,18 +1260,55 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     xathuBullets--;
     xathuRevealed = true;
     killPlayer(target, langSvc.t('gunner_log').replaceFirst('%s', target.name));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     checkGameOver();
     notifyListeners();
   }
 
-  void executeHunterShot(OnlinePlayer target) {
+  void executeHunterShot(OnlinePlayer? target) {
+    _hunterTimeoutTimer?.cancel();
     hunterSkillTriggered = false;
-    killPlayer(target, langSvc.t('hunter_log').replaceFirst('%s', target.name));
-    syncGameState();
+    
+    if (target != null) {
+      killPlayer(target, langSvc.t('hunter_log').replaceFirst('%s', target.name));
+      if (roomCode.isNotEmpty) {
+        firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+      }
+    }
+    
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.setHunterSkillActive(roomCode, false);
+    } else {
+      if (target != null) syncGameState();
+    }
+    
+    _updateActivity();
     checkGameOver();
     notifyListeners();
+  }
+
+  /// Thợ Săn chết: kích hoạt kỹ năng + đặt timeout 15 giây
+  void _triggerHunterSkill(OnlinePlayer hunter) {
+    if (roomCode.isEmpty) return;
+    hunterSkillTriggered = true;
+    hunterWhoDied = hunter;
+    firestoreSvc.setHunterSkillActive(roomCode, true, hunterPlayerId: hunter.id);
+    notifyListeners();
+
+    // Timeout 15 giây: nếu Thợ Săn không bắn, tự động bỏ qua
+    _hunterTimeoutTimer?.cancel();
+    _hunterTimeoutTimer = Timer(const Duration(seconds: 15), () {
+      if (hunterSkillTriggered) {
+        debugPrint('Hunter timeout: auto-skipping hunter skill');
+        executeHunterShot(null);
+      }
+    });
   }
 
   String getActionInstructionText() {
@@ -1262,6 +1478,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     _phaseTimer?.cancel();
     botChatTimer?.cancel(); 
     _roomSubscription?.cancel();
+    _heartbeatTimer?.cancel();
+    _hunterTimeoutTimer?.cancel();
+    _zombieTimer?.cancel();
     super.dispose(); 
   }
 }

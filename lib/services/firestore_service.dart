@@ -374,6 +374,97 @@ class FirestoreService {
     }
     return null;
   }
+
+  /// ============================================================
+  /// KỸ NĂNG: Transaction cập nhật đúng 1 thuộc tính của 1 người chơi
+  /// Tránh ghi đè toàn bộ mảng players (Race Condition).
+  /// ============================================================
+
+  /// Cập nhật 1 hoặc nhiều thuộc tính của người chơi bằng Transaction
+  Future<void> updatePlayerField(String roomCode, int targetPlayerId, Map<String, dynamic> fields) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          if (p['id'] == targetPlayerId) {
+            fields.forEach((key, value) => p[key] = value);
+            break;
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updatePlayerField: $e');
+    }
+  }
+
+  /// Cập nhật thuộc tính trên NHIỀU người chơi cùng lúc (dùng cho reset phase)
+  Future<void> updateMultiplePlayerFields(String roomCode, Map<int, Map<String, dynamic>> updates) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          final id = p['id'] as int?;
+          if (id != null && updates.containsKey(id)) {
+            updates[id]!.forEach((key, value) => p[key] = value);
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updateMultiplePlayerFields: $e');
+    }
+  }
+
+  /// Heartbeat: cập nhật lastSeen của người chơi để phát hiện Zombie Players
+  Future<void> updateLastSeen(String roomCode, String playerName) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          if (p['name'] == playerName) {
+            p['lastSeen'] = Timestamp.now();
+            break;
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updateLastSeen: $e');
+    }
+  }
+
+  /// Set hunterSkillActive flag trên Firebase để chờ Thợ Săn bắn
+  Future<void> setHunterSkillActive(String roomCode, bool active, {int? hunterPlayerId}) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'hunterSkillActive': active,
+        'hunterPlayerId': hunterPlayerId,
+        'hunterSkillSetAt': active ? Timestamp.now() : null,
+      });
+    } catch (e) {
+      debugPrint('Error in setHunterSkillActive: $e');
+    }
+  }
 }
 
 final firestoreSvc = FirestoreService();
+
