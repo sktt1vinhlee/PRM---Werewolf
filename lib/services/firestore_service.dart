@@ -372,8 +372,8 @@ class FirestoreService {
       }
     } catch (e) {
       debugPrint('Error finding public room: $e');
+      rethrow;
     }
-    return null;
   }
 
   /// ============================================================

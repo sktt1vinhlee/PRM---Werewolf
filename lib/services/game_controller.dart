@@ -636,7 +636,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         if (currentState != PlayState.matchmaking) return;
 
         debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1})...');
-        String? foundRoomCode = await firestoreSvc.findPublicRoom();
+        String? foundRoomCode;
+        try {
+          foundRoomCode = await firestoreSvc.findPublicRoom();
+        } catch (e) {
+          debugPrint('Matchmaking error during query: $e');
+        }
 
         if (foundRoomCode != null) {
           try {
