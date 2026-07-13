@@ -255,6 +255,41 @@ class FirestoreService {
     }
   }
 
+  /// Xử lý Vote an toàn bằng Transaction
+  Future<void> submitVoteTransaction(String roomCode, int? oldTargetId, int newTargetId, int weight) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+        
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+        
+        bool changed = false;
+        
+        for (var p in players) {
+          if (oldTargetId != null && p['id'] == oldTargetId) {
+            p['voteCount'] = (p['voteCount'] ?? 0) - weight;
+            if (p['voteCount'] < 0) p['voteCount'] = 0;
+            changed = true;
+          }
+          // newTargetId == -1 nghĩa là hủy bite (không tăng vote cho ai)
+          if (newTargetId != -1 && p['id'] == newTargetId) {
+            p['voteCount'] = (p['voteCount'] ?? 0) + weight;
+            changed = true;
+          }
+        }
+        
+        if (changed) {
+          transaction.update(roomRef, {'players': players});
+        }
+      });
+    } catch (e) {
+      debugPrint('Error in submitVoteTransaction: $e');
+    }
+  }
+
   /// Để tương thích với code cũ nếu chưa cập nhật hết
   Future<void> nextPhase(String roomCode, String phase, int durationSeconds) async {
     try {

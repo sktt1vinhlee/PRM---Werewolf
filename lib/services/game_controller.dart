@@ -38,6 +38,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? botChatTimer;
   StreamSubscription? _roomSubscription;
   Timestamp? _lastSyncedEndTime;
+  int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
 
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
@@ -241,6 +242,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           content: m['content'],
           targetName: m['targetName'],
           isSystem: m['isSystem'] ?? false,
+          isWerewolfOnly: m['isWerewolfOnly'] ?? false,
+          isGhost: m['isGhost'] ?? false,
           time: (m['time'] as Timestamp).toDate(),
         )).toList();
 
@@ -318,8 +321,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _triggerNextPhaseOnFirestore() {
-    // Chỉ Host hoặc người chơi có clock nhanh nhất sẽ kích hoạt chuyển phase
-    // Firestore Transaction đảm bảo phase chỉ chuyển ĐÚNG 1 LẦN.
+    // Chỉ HOST mới được quyền kích hoạt chuyển phase để tránh race condition
+    // khi nhiều máy có đồng hồ khác nhau cùng gọi đồng thời.
+    final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+    if (!isHost) return;
+
     String next;
     int duration;
     if (currentPhase == GamePhase.night) {
@@ -834,10 +840,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = null;
     selectedPlayer = null;
     werewolfTarget = null;
+    _myNightBiteTargetId = null; // Reset mục tiêu cắn khi bắt đầu ngày mới
   }
 
   void _resetLocalDayStates() {
     addLog(langSvc.t('voting_start'));
+    _myCurrentVoteTargetId = null; // Reset vote target mỗi khi vào ban ngày
     for (var p in players) {
       p.voteCount = 0;
       p.isTargeted = false;
@@ -845,23 +853,39 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _resetLocalVotingStates() {
+    _myCurrentVoteTargetId = null; // Reset vote target khi bắt đầu đêm mới
     for (var p in players) {
       p.voteCount = 0;
+      p.isTargeted = false; // Reset isTargeted khi bắt đầu đêm mới
     }
     addLog('${langSvc.t('night_number')} $dayNumber ${langSvc.t('night_start')}');
   }
 
   void executeVote(OnlinePlayer target) {
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
-    for (var p in players) {
-      if (p.isTargeted) {
-        p.voteCount -= weight;
-        p.isTargeted = false;
+    
+    if (roomCode.isNotEmpty) {
+      // ONLINE: dùng Transaction để tránh race condition ghi đè mảng
+      final oldTargetId = _myCurrentVoteTargetId;
+      _myCurrentVoteTargetId = target.id;
+      // Cập nhật local ngay lập tức để UI phản hồi nhanh
+      for (var p in players) {
+        if (p.id == oldTargetId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+        if (p.id == target.id) p.voteCount += weight;
       }
+      // Sau đó đồng bộ lên server an toàn bằng Transaction
+      firestoreSvc.submitVoteTransaction(roomCode, oldTargetId, target.id, weight);
+    } else {
+      // OFFLINE: ghi thẳng vào local state
+      for (var p in players) {
+        if (p.isTargeted) {
+          p.voteCount -= weight;
+          p.isTargeted = false;
+        }
+      }
+      target.voteCount += weight;
+      target.isTargeted = true;
     }
-    target.voteCount += weight;
-    target.isTargeted = true;
-    syncGameState();
     notifyListeners();
   }
 
@@ -939,23 +963,46 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  // _myNightBiteTargetId: ID mục tiêu bị cắn của sói (TÁCH BIỆT hoàn toàn với vote ban ngày)
+  int? _myNightBiteTargetId;
+
   void executeWerewolfBite(OnlinePlayer target) {
-    executeVote(target);
+    final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
+    final oldBiteId = _myNightBiteTargetId;
+    _myNightBiteTargetId = target.id;
+
+    // Cập nhật voteCount local (chỉ dùng để hiển thị trong đêm cho nhóm sói)
+    for (var p in players) {
+      if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+    }
+    target.voteCount += weight;
+
     _updateWerewolfLeadingTarget();
-    syncGameState();
+
+    // Đồng bộ mục tiêu cắn lên server (dùng Transaction riêng cho bite)
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, target.id, weight);
+      firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': target.id});
+    }
     notifyListeners();
   }
 
   void cancelWerewolfBite() {
+    if (_myNightBiteTargetId == null) return;
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
+    final oldBiteId = _myNightBiteTargetId;
+    _myNightBiteTargetId = null;
+
     for (var p in players) {
-      if (p.isTargeted) {
-        p.voteCount -= weight;
-        p.isTargeted = false;
-      }
+      if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
     }
     _updateWerewolfLeadingTarget();
-    syncGameState();
+
+    if (roomCode.isNotEmpty) {
+      // Xoá vote bite trên server
+      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, -1, weight); // -1 = không ai
+      firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': null});
+    }
     notifyListeners();
   }
 
