@@ -160,11 +160,15 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Trên web, trình duyệt có thể đưa tab vào trạng thái detached/paused khi không focus.
+    // Tạm thời tắt tự động rời phòng để tránh việc bị xóa khỏi Firestore và văng ra màn hình chính.
+    /*
     if (state == AppLifecycleState.detached) {
       if (roomCode.isNotEmpty) {
         firestoreSvc.leaveRoom(roomCode, userName);
       }
     }
+    */
   }
 
   int _lastProcessedPhaseNumber = -1;
