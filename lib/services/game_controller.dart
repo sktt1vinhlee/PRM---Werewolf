@@ -321,29 +321,26 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handlePhaseTransitionFromServer(GamePhase newPhase) {
-    final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+    // Trong chế độ Online, chúng ta không tự tính toán kết quả locally 
+    // vì Server (Firestore Transaction) đã làm điều đó và cập nhật vào danh sách players.
     
-    // Đảm bảo cập nhật phase locally trước bất kỳ tác vụ nào khác để tránh ghi đè dữ liệu cũ
     currentPhase = newPhase;
 
     if (newPhase == GamePhase.day) {
-      if (roomCode.isEmpty || isHost) {
-        _processNightResults();
-        // Online: Không gọi syncGameState() ở đây vì server transaction đã cập nhật Firestore rồi
+      if (roomCode.isEmpty) {
+        _processNightResults(); // Chỉ chạy offline
       } else {
         _resetLocalNightStates();
       }
     } else if (newPhase == GamePhase.voting) {
-      if (roomCode.isEmpty || isHost) {
-        _processDayResults();
-        // Online: Không gọi syncGameState() ở đây
+      if (roomCode.isEmpty) {
+        _processDayResults(); // Chỉ chạy offline
       } else {
         _resetLocalDayStates();
       }
     } else if (newPhase == GamePhase.night) {
-      if (roomCode.isEmpty || isHost) {
-        _processVotingResults();
-        // Online: Không gọi syncGameState() ở đây
+      if (roomCode.isEmpty) {
+        _processVotingResults(); // Chỉ chạy offline
       } else {
         _resetLocalVotingStates();
       }
@@ -824,7 +821,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void killPlayer(OnlinePlayer player, String reason) {
     if (!player.isAlive) return;
     player.isAlive = false;
-    addLog(reason);
+    
+    // Chỉ thêm log nếu không phải đang trong trận online (online dùng system messages)
+    if (roomCode.isEmpty) {
+      addLog(reason);
+    }
+    
     if (lover1 != null && lover2 != null) {
       if (player.id == lover1!.id && lover2!.isAlive) {
         killPlayer(lover2!, langSvc.t('lover_tragedy'));
@@ -832,11 +834,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         killPlayer(lover1!, langSvc.t('lover_tragedy'));
       }
     }
+    
+    // Logic kỹ năng thợ săn
     if (player.role.id == 'tho_san') {
       if (player.id == myPlayer?.id) {
         hunterSkillTriggered = true;
         hunterWhoDied = player;
-      } else {
+      } else if (roomCode.isEmpty) {
         simulateBotHunterShot(player);
       }
     }
