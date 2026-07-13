@@ -11,6 +11,11 @@ import 'language_service.dart';
 import 'firestore_service.dart';
 
 class GameController extends ChangeNotifier with WidgetsBindingObserver {
+  // Cấu hình thời gian cho các giai đoạn (Đồng bộ Web & Android)
+  static const int durationNight = 15;
+  static const int durationDay = 60;
+  static const int durationVoting = 15;
+
   PlayState currentState = PlayState.setup;
   GamePhase currentPhase = GamePhase.night;
   int playerCount = 15;
@@ -203,6 +208,15 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
               players[i].isAlive = pData['isAlive'] ?? true;
               players[i].voteCount = pData['voteCount'] ?? 0;
               players[i].isHost = pData['isHost'] ?? false;
+              players[i].isProtected = pData['isProtected'] ?? false;
+              players[i].isPoisoned = pData['isPoisoned'] ?? false;
+              players[i].wasProtectedByBodyguard = pData['wasProtectedByBodyguard'] ?? false;
+              players[i].wasHealedByWitch = pData['wasHealedByWitch'] ?? false;
+              
+              // Cập nhật lại reference cho myPlayer để đảm bảo nhận diện đúng bản thân
+              if (players[i].name == userName) {
+                myPlayer = players[i];
+              }
             }
           }
         }
@@ -280,6 +294,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  // --- 1. QUẢN LÝ THỜI GIAN VÀ ĐỒNG BỘ ---
   void _startLocalVisualTimer() {
     _phaseTimer?.cancel();
     _phaseTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -288,6 +303,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       } else {
         timer.cancel();
+        // Khi hết giờ: Chế độ Online gọi Server, Offline xử lý locally
         if (roomCode.isNotEmpty) {
           _triggerNextPhaseOnFirestore();
         } else {
@@ -298,14 +314,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _triggerNextPhaseOnFirestore() {
+    // Chỉ Host hoặc người chơi có clock nhanh nhất sẽ kích hoạt chuyển phase
+    // Firestore Transaction đảm bảo phase chỉ chuyển ĐÚNG 1 LẦN.
     String next;
     int duration;
     if (currentPhase == GamePhase.night) {
-      next = 'day'; duration = 60;
+      next = 'day'; 
+      duration = durationDay;
     } else if (currentPhase == GamePhase.day) {
-      next = 'voting'; duration = 15;
+      next = 'voting'; 
+      duration = durationVoting;
     } else {
-      next = 'night'; duration = 15;
+      next = 'night'; 
+      duration = durationNight;
     }
     firestoreSvc.secureNextPhase(roomCode, phaseNumber, next, duration);
   }
@@ -320,6 +341,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  // --- 2. XỬ LÝ CHUYỂN GIAI ĐOẠN ---
   void _handlePhaseTransitionFromServer(GamePhase newPhase) {
     // Trong chế độ Online, chúng ta không tự tính toán kết quả locally 
     // vì Server (Firestore Transaction) đã làm điều đó và cập nhật vào danh sách players.
@@ -443,7 +465,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       xathuRevealed = false;
       addLog('${langSvc.t('system')}: ${langSvc.t('quick_match_started')}');
       simulateWerewolfNightTarget();
-      startPhaseTimer(15);
+      startPhaseTimer(durationNight);
       notifyListeners();
     });
   }
@@ -575,11 +597,32 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void syncGameState() {
     if (roomCode.isEmpty) return;
+    
+    // Đồng bộ danh sách người chơi (bao gồm trạng thái sống/chết và các hiệu ứng)
+    // Lưu ý: Trong chế độ Online, Host thường là người chịu trách nhiệm chính đồng bộ 
+    // hoặc mỗi người chơi tự cập nhật hành động của mình qua các hàm execute riêng.
+    final List<Map<String, dynamic>> playersMaps = players.map((p) {
+      // Kết hợp dữ liệu role (không đổi) và dữ liệu trạng thái (thay đổi)
+      return {
+        'id': p.id,
+        'name': p.name,
+        'roleId': p.role.id,
+        'isHost': p.isHost,
+        'isAlive': p.isAlive,
+        'voteCount': p.voteCount,
+        'isProtected': p.isProtected,
+        'isPoisoned': p.isPoisoned,
+        'wasProtectedByBodyguard': p.wasProtectedByBodyguard,
+        'wasHealedByWitch': p.wasHealedByWitch,
+      };
+    }).toList();
+
     firestoreSvc.updateRoomData(roomCode, {
       'dayNumber': dayNumber,
       'currentPhase': currentPhase.name,
-      'playerStatuses': players.map((p) => p.toStatusMap()).toList(),
+      'players': playersMaps, // Cập nhật trực tiếp vào mảng players chính
       'werewolfTargetId': werewolfTarget?.id,
+      'witchReviveTargetId': witchReviveTargetId,
     });
   }
 
@@ -691,7 +734,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     currentPhase = GamePhase.day;
     if (checkGameOver().isEmpty) {
       startPeriodicBotChat();
-      startPhaseTimer(60);
+      startPhaseTimer(durationDay);
     }
     notifyListeners();
   }
@@ -701,7 +744,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     stopPeriodicBotChat();
     _processDayResults();
     currentPhase = GamePhase.voting;
-    startPhaseTimer(15);
+    startPhaseTimer(durationVoting);
     notifyListeners();
   }
 
@@ -715,7 +758,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     currentPhase = GamePhase.night;
     if (checkGameOver().isEmpty) {
       simulateWerewolfNightTarget();
-      startPhaseTimer(15);
+      startPhaseTimer(durationNight);
     }
     notifyListeners();
   }

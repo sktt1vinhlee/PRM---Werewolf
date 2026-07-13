@@ -156,7 +156,7 @@ class FirestoreService {
         'currentPhase': 'night',
         'phaseNumber': 1,
         'dayNumber': 1,
-        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 15))),
+        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 15))), // Ban đêm đầu tiên 15s
         'messages': FieldValue.arrayUnion([
           {
             'senderName': 'system',
