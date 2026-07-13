@@ -452,42 +452,51 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> startOnlineMatchmaking() async {
+    if (roomCode.isNotEmpty && currentState == PlayState.lobby) return;
+
     await _ensureNameLoaded();
     currentState = PlayState.matchmaking;
     notifyListeners();
 
     try {
-      // Tăng số lần thử và giãn cách thời gian để các client dễ tìm thấy nhau hơn
-      for (int attempt = 0; attempt < 5; attempt++) {
-        // Delay tăng dần + jitter để tránh việc nhiều máy cùng tạo phòng một lúc
-        // Vòng lặp đầu đợi ngắn, các vòng sau đợi lâu hơn để nhường máy khác tạo phòng
-        int delay = 500 + (attempt * 1200) + Random().nextInt(1000);
+      // Tìm phòng liên tục trong khoảng 10-15 giây trước khi tự tạo phòng mới
+      // Điều này đảm bảo người chơi sẽ "tụ" vào các phòng hiện có thay vì tạo phòng riêng
+      for (int attempt = 0; attempt < 10; attempt++) {
+        // Đợi một khoảng thời gian ngẫu nhiên để các máy khách không quét cùng lúc
+        // Tăng dần độ trễ để các client có thời gian tạo phòng và các client khác tìm thấy
+        int delay = 1000 + (attempt * 1000) + Random().nextInt(1000);
         await Future.delayed(Duration(milliseconds: delay));
 
-        // Tìm phòng công khai đang chờ
+        if (currentState != PlayState.matchmaking) return;
+
+        debugPrint('Matchmaking attempt ${attempt + 1}: Searching for rooms...');
         String? foundRoomCode = await firestoreSvc.findPublicRoom();
 
         if (foundRoomCode != null) {
           try {
             await joinExistingRoom(foundRoomCode, userName);
-            return; // Gia nhập thành công
+            debugPrint('Matchmaking: Joined existing room $foundRoomCode');
+            return; 
           } catch (e) {
-            debugPrint('Attempt $attempt: Room $foundRoomCode busy or full, retrying...');
-            continue;
+            debugPrint('Matchmaking: Failed to join $foundRoomCode, searching again...');
           }
         }
       }
 
-      // Nếu sau 5 lần thử (~8-10 giây) vẫn không thấy phòng, mới tạo phòng mới
-      generateRoomCode();
-      await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
-      
-      currentState = PlayState.lobby;
-      listenToRoom(roomCode);
+      // Chỉ tạo phòng mới nếu sau nhiều lần thử vẫn không thấy phòng nào
+      if (currentState == PlayState.matchmaking) {
+        generateRoomCode();
+        await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
+        
+        currentState = PlayState.lobby;
+        listenToRoom(roomCode);
+      }
     } catch (e) {
       debugPrint('Matchmaking error: $e');
-      currentState = PlayState.setup;
-      notifyListeners();
+      if (currentState == PlayState.matchmaking) {
+        currentState = PlayState.setup;
+        notifyListeners();
+      }
     }
   }
 

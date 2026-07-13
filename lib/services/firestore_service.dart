@@ -288,31 +288,48 @@ class FirestoreService {
     }
   }
 
-  /// Tìm phòng ghép trận Online
+  /// Tìm phòng ghép trận Online - Ưu tiên phòng đông người nhất để nhanh đủ người
   Future<String?> findPublicRoom() async {
     try {
-      // Loại bỏ orderBy để tránh yêu cầu composite index phức tạp, thực hiện sort trong memory
+      // Lấy danh sách các phòng công khai đang chờ
       final snapshot = await _db
           .collection('rooms')
           .where('isPublic', isEqualTo: true)
           .where('status', isEqualTo: 'waiting')
-          .limit(10) // Lấy một danh sách nhỏ để chọn phòng tốt nhất
+          .limit(20) // Lấy danh sách rộng hơn để chọn lọc tốt hơn
           .get();
 
       if (snapshot.docs.isEmpty) return null;
 
-      // Sắp xếp trong memory: ưu tiên phòng đông người hơn để nhanh đủ người chơi
-      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs = snapshot.docs.toList();
+      // Sắp xếp trong bộ nhớ: 
+      // 1. Ưu tiên phòng có nhiều người chơi nhất (nhưng chưa đầy)
+      // 2. Nếu cùng số người, ưu tiên phòng cũ hơn (createdAt tăng dần)
+      final docs = snapshot.docs.toList();
       docs.sort((a, b) {
-        int countA = a.data()['currentPlayersCount'] ?? 0;
-        int countB = b.data()['currentPlayersCount'] ?? 0;
-        return countB.compareTo(countA);
+        final dataA = a.data();
+        final dataB = b.data();
+        
+        int countA = dataA['currentPlayersCount'] ?? 0;
+        int countB = dataB['currentPlayersCount'] ?? 0;
+        
+        if (countA != countB) {
+          return countB.compareTo(countA); // Giảm dần theo số người
+        }
+        
+        // Nếu bằng số người, ưu tiên phòng tạo trước
+        Timestamp? timeA = dataA['createdAt'];
+        Timestamp? timeB = dataB['createdAt'];
+        if (timeA != null && timeB != null) {
+          return timeA.compareTo(timeB); // Tăng dần theo thời gian
+        }
+        return 0;
       });
 
       for (var doc in docs) {
         final data = doc.data();
         int current = data['currentPlayersCount'] ?? 0;
         int limit = data['playerCount'] ?? 15;
+        
         if (current < limit) {
           return doc.id;
         }
