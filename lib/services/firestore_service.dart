@@ -71,17 +71,18 @@ class FirestoreService {
         }
         
         bool exists = players.any((p) => p['name'] == userName);
-        if (!exists) {
-          players.add({
-            'name': userName,
-            'isHost': false,
-            'isReady': false,
-          });
-          transaction.update(roomRef, {
-            'players': players,
-            'currentPlayersCount': players.length,
-          });
+        if (exists) {
+          throw Exception('username_already_exists');
         }
+        players.add({
+          'name': userName,
+          'isHost': false,
+          'isReady': false,
+        });
+        transaction.update(roomRef, {
+          'players': players,
+          'currentPlayersCount': players.length,
+        });
       });
     } catch (e) {
       debugPrint('Error joining room: $e');

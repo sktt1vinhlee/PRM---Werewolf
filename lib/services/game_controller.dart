@@ -430,9 +430,30 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> joinExistingRoom(String code, String name) async {
     try {
-      await firestoreSvc.joinRoom(code, name);
+      String finalName = name;
+      bool joined = false;
+      int attempts = 0;
+      
+      while (!joined && attempts < 5) {
+        try {
+          await firestoreSvc.joinRoom(code, finalName);
+          joined = true;
+        } catch (e) {
+          if (e.toString().contains('username_already_exists')) {
+            finalName = '${name}_${Random().nextInt(99)}';
+            attempts++;
+          } else {
+            rethrow;
+          }
+        }
+      }
+      
+      if (!joined) {
+        throw Exception('Cannot join room due to name conflict');
+      }
+
       roomCode = code;
-      userName = name;
+      userName = finalName;
       currentState = PlayState.lobby;
       listenToRoom(roomCode);
       _startHeartbeat(); // Bắt đầu heartbeat khi vào phòng
