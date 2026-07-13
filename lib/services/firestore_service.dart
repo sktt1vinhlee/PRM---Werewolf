@@ -5,7 +5,7 @@ class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   /// Tạo phòng mới trên Firestore
-  Future<void> createRoom(String roomCode, String hostName, int playerCount, {bool isPublic = false}) async {
+  Future<void> createRoom(String roomCode, String hostName, int playerCount, {bool isPublic = true}) async {
     try {
       await _db.collection('rooms').doc(roomCode).set({
         'roomCode': roomCode,
