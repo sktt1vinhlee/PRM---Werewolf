@@ -57,7 +57,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     RoleDefinition(
       id: 'dan', name: 'role_dan', description: 'role_dan_desc', team: RoleTeam.villager, icon: Icons.person, 
       primaryColor: const Color(0xFF2E7D32), secondaryColor: const Color(0xFF4CAF50), isUnique: false,
-      difficulty: 1, lore: 'lore_dan', tips: ['tip_dan_1', 'tip_dan_2']
+      difficulty: 1, lore: 'role_dan_lore', tips: ['tip_dan_1', 'tip_dan_2']
     ),
     RoleDefinition(
       id: 'soi', name: 'role_soi', description: 'role_soi_desc', team: RoleTeam.werewolf, icon: Icons.pets, 
@@ -85,7 +85,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       difficulty: 3, lore: 'role_tien_tri_lore', tips: ['tip_tien_tri_1', 'tip_tien_tri_2']
     ),
     RoleDefinition(
-      id: 'cupid', name: 'role_cupid', description: 'role_cupid_desc', team: RoleTeam.villager, icon: Icons.favorite, 
+      id: 'cupid', name: 'role_cupid', description: 'role_cupid_desc', team: RoleTeam.neutral, icon: Icons.favorite,
       primaryColor: const Color(0xFFAD1457), secondaryColor: const Color(0xFFEC407A), isUnique: true,
       difficulty: 4, lore: 'role_cupid_lore', tips: ['tip_cupid_1']
     ),
@@ -438,29 +438,44 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> startOnlineMatchmaking() async {
     await _ensureNameLoaded();
     currentState = PlayState.matchmaking;
-    isLobbyLoading = true;
     notifyListeners();
+
     try {
-      for (int i = 0; i < 3; i++) {
+      // Thử tối đa 3 lần để tìm và gia nhập phòng có sẵn
+      for (int attempt = 0; attempt < 3; attempt++) {
+        // Jitter ngẫu nhiên (0-500ms) để các máy khách không dẫm chân nhau
+        await Future.delayed(Duration(milliseconds: Random().nextInt(500)));
+
+        // 1. Tìm phòng công khai đang chờ, ưu tiên phòng đông người nhất
         String? foundRoomCode = await firestoreSvc.findPublicRoom();
+
         if (foundRoomCode != null) {
-          await joinExistingRoom(foundRoomCode, userName);
-          isLobbyLoading = false;
-          notifyListeners();
-          return;
+          try {
+            await joinExistingRoom(foundRoomCode, userName);
+            // Gia nhập thành công -> Kết thúc
+            return;
+          } catch (e) {
+            // Nếu lỗi (phòng vừa đầy hoặc bị xóa), tiếp tục vòng lặp để tìm phòng khác
+            debugPrint('Attempt $attempt: Room $foundRoomCode full or busy, retrying...');
+            continue;
+          }
         }
-        if (i < 2) await Future.delayed(const Duration(seconds: 2));
+        
+        // Nếu không thấy phòng nào ở lượt đầu, đợi thêm 1 chút ở lượt sau
+        if (attempt < 2) await Future.delayed(const Duration(milliseconds: 300));
       }
+
+      // 2. Nếu sau các lần thử vẫn không có phòng phù hợp, mới tiến hành tạo phòng mới
       generateRoomCode();
       await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
+      
       currentState = PlayState.lobby;
       listenToRoom(roomCode);
     } catch (e) {
-      isLobbyLoading = false;
+      debugPrint('Matchmaking error: $e');
+      currentState = PlayState.setup;
       notifyListeners();
     }
-    isLobbyLoading = false;
-    notifyListeners();
   }
 
   void startGame() {
@@ -511,9 +526,31 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners(); 
   }
   
-  void selectPlayer(OnlinePlayer? player) { 
-    selectedPlayer = player; 
-    notifyListeners(); 
+  void selectPlayer(OnlinePlayer? player) {
+    if (player == null) {
+      selectedPlayer = null;
+      notifyListeners();
+      return;
+    }
+
+    // Logic đặc biệt cho Cupid: Chọn tối đa 2 người, chọn người thứ 3 sẽ đẩy người thứ 1 ra
+    if (currentPhase == GamePhase.night && myPlayer?.role.id == 'cupid' && lover1 == null) {
+      final exists = cupidSelections.any((p) => p.id == player.id);
+      if (exists) {
+        cupidSelections.removeWhere((p) => p.id == player.id);
+      } else {
+        if (cupidSelections.length >= 2) {
+          cupidSelections.removeAt(0); // Queue: Loại bỏ người chọn đầu tiên
+        }
+        cupidSelections.add(player);
+      }
+      selectedPlayer = player;
+      notifyListeners();
+      return;
+    }
+
+    selectedPlayer = player;
+    notifyListeners();
   }
 
   void syncGameState() {
@@ -939,30 +976,75 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   String checkGameOver() {
     if (currentState != PlayState.playing || players.isEmpty) return '';
+    
+    // 1. Kiểm tra Kẻ Ngốc (Nerd) bị treo cổ
     if (isNerdHanged) {
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
       return '${langSvc.t('role_nerd')} thắng!';
     }
+
+    // 2. Kiểm tra Phe Tình Nhân chiến thắng tuyệt đối
+    if (lover1 != null && lover2 != null && lover1!.isAlive && lover2!.isAlive) {
+      int aliveCount = players.where((p) => p.isAlive).length;
+      // Thắng khi chỉ còn 2 người tình, hoặc 2 người tình + Cupid
+      if (aliveCount == 2 || (aliveCount == 3 && players.any((p) => p.isAlive && p.role.id == 'cupid'))) {
+        currentState = PlayState.ended;
+        _phaseTimer?.cancel();
+        return 'Phe Tình Nhân đã giành chiến thắng! ❤️';
+      }
+    }
+
     int w = players.where((p) => p.isAlive && (p.role.team == RoleTeam.werewolf || p.id == cursedPlayerId)).length;
     int g = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).length;
+
+    // 3. Phe Dân Làng thắng
     if (w == 0) {
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
       return 'Dân Làng thắng!';
     }
+
+    // 4. Phe Ma Sói thắng
     if (w >= g) {
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
       return 'Ma Sói thắng!';
     }
+
     return '';
   }
 
   bool isMyWin(String msg) {
     if (myPlayer == null) return false;
-    if (msg.contains('Nerd') || msg.contains('Ngốc')) return myPlayer!.role.id == 'nerd';
-    return (myPlayer!.role.team == RoleTeam.werewolf && (msg.contains('Sói') || msg.contains('Werewolves'))) || (myPlayer!.role.team != RoleTeam.werewolf && (msg.contains('Dân') || msg.contains('Villagers')));
+
+    // Nerd Win
+    if (msg.contains('Nerd') || msg.contains('Ngốc')) {
+      return myPlayer!.role.id == 'nerd';
+    }
+
+    // Lovers Faction Win
+    if (msg.contains('Tình Nhân') || msg.contains('Lovers')) {
+      if (myPlayer!.role.id == 'cupid') return true;
+      if (lover1 != null && lover2 != null) {
+        if (myPlayer!.id == lover1!.id || myPlayer!.id == lover2!.id) return true;
+      }
+      return false;
+    }
+
+    // Cupid's special condition for other team wins
+    if (myPlayer!.role.id == 'cupid') {
+      return lover1 != null && lover2 != null && lover1!.isAlive && lover2!.isAlive;
+    }
+
+    // Standard Team Wins
+    bool isWolfWin = msg.contains('Sói') || msg.contains('Werewolves');
+    bool isVillagerWin = msg.contains('Dân') || msg.contains('Villagers');
+
+    if (myPlayer!.role.team == RoleTeam.werewolf) return isWolfWin;
+    if (myPlayer!.role.team == RoleTeam.villager) return isVillagerWin;
+
+    return false;
   }
 
   void _simulateBotVotesGradually() {

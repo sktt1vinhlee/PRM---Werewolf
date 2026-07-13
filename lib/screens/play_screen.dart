@@ -182,7 +182,16 @@ class _PlayScreenState extends State<PlayScreen> {
         } else if (state == PlayState.matchmaking) {
           body = _buildMatchmakingView();
         } else if (state == PlayState.lobby) {
-          body = SafeArea(child: _buildLobbyView());
+          // CHỈNH SỬA: Đưa BottomBar vào trong Body để hưởng nền Gradient
+          body = SafeArea(
+            child: Column(
+              children: [
+                Expanded(child: _buildLobbyView()),
+                _buildLobbyBottomBar(),
+              ],
+            ),
+          );
+          bottomBar = null; 
         } else if (state == PlayState.roleReveal) {
           body = _buildRoleRevealView();
         } else {
@@ -203,10 +212,6 @@ class _PlayScreenState extends State<PlayScreen> {
             ),
             child: body,
           );
-        }
-
-        if (state == PlayState.lobby) {
-          bottomBar = SafeArea(child: _buildLobbyBottomBar());
         }
 
         final bgColor = isNight ? const Color(0xFF0F172A) : const Color(0xFF9CDCFD);
@@ -1177,20 +1182,22 @@ class _PlayScreenState extends State<PlayScreen> {
 
     if (isNight) {
       if (my.role.id == 'cupid' && _controller.lover1 == null) {
-        final sel = _controller.cupidSelections.any((p) => p.id == target.id);
-        if (_controller.cupidSelections.length < 2 || sel) {
-          return Row(children: [
-            Expanded(child: ElevatedButton(onPressed: () => setState(() { 
-              if (sel) {
-                _controller.cupidSelections.removeWhere((p) => p.id == target.id); 
-              } else {
-                _controller.cupidSelections.add(target); 
-              }
-            }), style: ElevatedButton.styleFrom(backgroundColor: sel ? Colors.grey : Colors.pink[300]), child: FittedBox(child: Text(sel ? langSvc.t('action_unselect') : '${langSvc.t('join')} (${_controller.cupidSelections.length}/2)', style: const TextStyle(color: Colors.white))))),
-          ]);
-        }
+        final count = _controller.cupidSelections.length;
+        final isReady = count == 2;
         return Row(children: [
-          Expanded(child: ElevatedButton(onPressed: _controller.executeCupidLink, style: ElevatedButton.styleFrom(backgroundColor: Colors.pink), child: FittedBox(child: Text(langSvc.t('action_cupid_link'), style: const TextStyle(color: Colors.white))))),
+          Expanded(child: ElevatedButton(
+            onPressed: isReady ? _controller.executeCupidLink : null, 
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isReady ? Colors.pink : Colors.white24,
+              elevation: isReady ? 4 : 0,
+            ), 
+            child: FittedBox(child: Text(
+              isReady 
+                ? '${langSvc.t('action_cupid_link').toUpperCase()} ❤️' 
+                : '${langSvc.t('action_cupid_link').toUpperCase()} ($count/2)', 
+              style: TextStyle(color: isReady ? Colors.white : Colors.white38, fontWeight: FontWeight.w900)
+            ))
+          )),
         ]);
       }
       if (my.role.id == 'tien_tri' && !_controller.hasUsedSeerScan && target.isAlive && target.id != my.id && !target.hasBeenScannedBySeer) {
