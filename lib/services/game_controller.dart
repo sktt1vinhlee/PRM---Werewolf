@@ -459,32 +459,33 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     try {
-      // Tìm phòng liên tục trong khoảng 10-15 giây trước khi tự tạo phòng mới
-      // Điều này đảm bảo người chơi sẽ "tụ" vào các phòng hiện có thay vì tạo phòng riêng
-      for (int attempt = 0; attempt < 10; attempt++) {
-        // Đợi một khoảng thời gian ngẫu nhiên để các máy khách không quét cùng lúc
-        // Tăng dần độ trễ để các client có thời gian tạo phòng và các client khác tìm thấy
-        int delay = 1000 + (attempt * 1000) + Random().nextInt(1000);
-        await Future.delayed(Duration(milliseconds: delay));
+      // THUẬT TOÁN GHÉP TRẬN TỐI ƯU:
+      // Thử tìm phòng trong 6 vòng với tốc độ nhanh (mỗi 1.5s)
+      // Điều này giúp người dùng "hội quân" vào phòng đông nhất cực nhanh.
+      for (int attempt = 0; attempt < 6; attempt++) {
+        // Delay ngẫu nhiên ngắn (200-500ms) ở vòng đầu để phân cấp máy khách nào sẽ là người tạo phòng
+        int initialJitter = (attempt == 0) ? Random().nextInt(500) : 0;
+        await Future.delayed(Duration(milliseconds: 1500 + initialJitter));
 
         if (currentState != PlayState.matchmaking) return;
 
-        debugPrint('Matchmaking attempt ${attempt + 1}: Searching for rooms...');
+        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1})...');
         String? foundRoomCode = await firestoreSvc.findPublicRoom();
 
         if (foundRoomCode != null) {
           try {
             await joinExistingRoom(foundRoomCode, userName);
-            debugPrint('Matchmaking: Joined existing room $foundRoomCode');
+            debugPrint('Matchmaking SUCCESS: Joined room $foundRoomCode');
             return; 
           } catch (e) {
-            debugPrint('Matchmaking: Failed to join $foundRoomCode, searching again...');
+            debugPrint('Matchmaking: Room $foundRoomCode just became full/invalid, searching next...');
           }
         }
       }
 
-      // Chỉ tạo phòng mới nếu sau nhiều lần thử vẫn không thấy phòng nào
+      // Nếu sau ~10 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
       if (currentState == PlayState.matchmaking) {
+        debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
         await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
         
