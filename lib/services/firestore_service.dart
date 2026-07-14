@@ -5,7 +5,7 @@ class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   /// Tạo phòng mới trên Firestore
-  Future<void> createRoom(String roomCode, String hostName, int playerCount, {bool isPublic = false}) async {
+  Future<void> createRoom(String roomCode, String hostName, int playerCount, {bool isPublic = true}) async {
     try {
       await _db.collection('rooms').doc(roomCode).set({
         'roomCode': roomCode,
@@ -55,7 +55,7 @@ class FirestoreService {
   Future<void> joinRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-      
+
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) {
@@ -69,19 +69,20 @@ class FirestoreService {
         if (players.length >= limit) {
           throw Exception('Room is full');
         }
-        
+
         bool exists = players.any((p) => p['name'] == userName);
-        if (!exists) {
-          players.add({
-            'name': userName,
-            'isHost': false,
-            'isReady': false,
-          });
-          transaction.update(roomRef, {
-            'players': players,
-            'currentPlayersCount': players.length,
-          });
+        if (exists) {
+          throw Exception('username_already_exists');
         }
+        players.add({
+          'name': userName,
+          'isHost': false,
+          'isReady': false,
+        });
+        transaction.update(roomRef, {
+          'players': players,
+          'currentPlayersCount': players.length,
+        });
       });
     } catch (e) {
       debugPrint('Error joining room: $e');
@@ -93,14 +94,14 @@ class FirestoreService {
   Future<void> leaveRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-      
+
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
         List players = List.from(data['players'] ?? []);
-        
+
         int index = players.indexWhere((p) => p['name'] == userName);
         if (index == -1) return;
 
@@ -175,12 +176,12 @@ class FirestoreService {
   /// CHUYỂN PHASE AN TOÀN VÀ TÍNH TOÁN KẾT QUẢ
   Future<void> secureNextPhase(String roomCode, int expectedPhaseNumber, String nextPhase, int durationSeconds) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
-    
+
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-        
+
         final data = snapshot.data()!;
         int currentPN = data['phaseNumber'] ?? 0;
         if (currentPN != expectedPhaseNumber) return;
@@ -192,7 +193,7 @@ class FirestoreService {
         if (currentPhase == 'night') {
           int? victimId = data['werewolfTargetId'];
           int? reviveId = data['witchReviveTargetId'];
-          
+
           for (var p in players) {
             if (p['id'] == victimId && victimId != null) {
               if (p['isProtected'] != true && p['id'] != reviveId) {
@@ -210,7 +211,7 @@ class FirestoreService {
             p['wasProtectedByBodyguard'] = false;
             p['wasHealedByWitch'] = false;
           }
-        } 
+        }
         else if (currentPhase == 'voting') {
           int maxVotes = 0;
           dynamic hangedPlayer;
@@ -252,6 +253,41 @@ class FirestoreService {
       });
     } catch (e) {
       debugPrint('Error in secureNextPhase: $e');
+    }
+  }
+
+  /// Xử lý Vote an toàn bằng Transaction
+  Future<void> submitVoteTransaction(String roomCode, int? oldTargetId, int newTargetId, int weight) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        bool changed = false;
+
+        for (var p in players) {
+          if (oldTargetId != null && p['id'] == oldTargetId) {
+            p['voteCount'] = (p['voteCount'] ?? 0) - weight;
+            if (p['voteCount'] < 0) p['voteCount'] = 0;
+            changed = true;
+          }
+          // newTargetId == -1 nghĩa là hủy bite (không tăng vote cho ai)
+          if (newTargetId != -1 && p['id'] == newTargetId) {
+            p['voteCount'] = (p['voteCount'] ?? 0) + weight;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          transaction.update(roomRef, {'players': players});
+        }
+      });
+    } catch (e) {
+      debugPrint('Error in submitVoteTransaction: $e');
     }
   }
 
@@ -301,21 +337,21 @@ class FirestoreService {
 
       if (snapshot.docs.isEmpty) return null;
 
-      // Sắp xếp trong bộ nhớ: 
+      // Sắp xếp trong bộ nhớ:
       // 1. Ưu tiên phòng có nhiều người chơi nhất (nhưng chưa đầy)
       // 2. Nếu cùng số người, ưu tiên phòng cũ hơn (createdAt tăng dần)
       final docs = snapshot.docs.toList();
       docs.sort((a, b) {
         final dataA = a.data();
         final dataB = b.data();
-        
+
         int countA = dataA['currentPlayersCount'] ?? 0;
         int countB = dataB['currentPlayersCount'] ?? 0;
-        
+
         if (countA != countB) {
           return countB.compareTo(countA); // Giảm dần theo số người
         }
-        
+
         // Nếu bằng số người, ưu tiên phòng tạo trước
         Timestamp? timeA = dataA['createdAt'];
         Timestamp? timeB = dataB['createdAt'];
@@ -329,15 +365,116 @@ class FirestoreService {
         final data = doc.data();
         int current = data['currentPlayersCount'] ?? 0;
         int limit = data['playerCount'] ?? 15;
-        
+
         if (current < limit) {
           return doc.id;
         }
       }
     } catch (e) {
       debugPrint('Error finding public room: $e');
+      rethrow;
     }
-    return null;
+  }
+
+  /// ============================================================
+  /// KỸ NĂNG: Transaction cập nhật đúng 1 thuộc tính của 1 người chơi
+  /// Tránh ghi đè toàn bộ mảng players (Race Condition).
+  /// ============================================================
+
+  /// Cập nhật 1 hoặc nhiều thuộc tính của người chơi bằng Transaction
+  Future<void> updatePlayerField(String roomCode, int targetPlayerId, Map<String, dynamic> fields) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          if (p['id'] == targetPlayerId) {
+            fields.forEach((key, value) => p[key] = value);
+            break;
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updatePlayerField: $e');
+    }
+  }
+
+  /// Cập nhật thuộc tính trên NHIỀU người chơi cùng lúc (dùng cho reset phase)
+  Future<void> updateMultiplePlayerFields(String roomCode, Map<int, Map<String, dynamic>> updates) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          final id = p['id'] as int?;
+          if (id != null && updates.containsKey(id)) {
+            updates[id]!.forEach((key, value) => p[key] = value);
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updateMultiplePlayerFields: $e');
+    }
+  }
+
+  /// Heartbeat: cập nhật lastSeen của người chơi để phát hiện Zombie Players
+  Future<void> updateLastSeen(String roomCode, String playerName) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          if (p['name'] == playerName) {
+            p['lastSeen'] = Timestamp.now();
+            break;
+          }
+        }
+        transaction.update(roomRef, {'players': players});
+      });
+    } catch (e) {
+      debugPrint('Error in updateLastSeen: $e');
+    }
+  }
+
+  /// Set hunterSkillActive flag trên Firebase để chờ Thợ Săn bắn
+  Future<void> setHunterSkillActive(String roomCode, bool active, {int? hunterPlayerId}) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'hunterSkillActive': active,
+        'hunterPlayerId': hunterPlayerId,
+        'hunterSkillSetAt': active ? Timestamp.now() : null,
+      });
+    } catch (e) {
+      debugPrint('Error in setHunterSkillActive: $e');
+    }
+  }
+
+  /// Cập nhật trạng thái công khai/riêng tư của phòng
+  Future<void> updateRoomPrivacy(String roomCode, bool isPublic) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'isPublic': isPublic,
+      });
+    } catch (e) {
+      debugPrint('Error updating room privacy: $e');
+    }
   }
 }
 

@@ -25,6 +25,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   bool isLobbyLoading = false;
   int dayNumber = 1;
   int phaseNumber = 0;
+  bool isRoomLocked = false;
 
   List<OnlinePlayer> players = [];
   List<String> lobbyPlayerNames = [];
@@ -32,12 +33,21 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   OnlinePlayer? selectedPlayer;
   List<String> actionLogs = [];
   List<ChatMessage> chatMessages = [];
-  
+
   int phaseTimerSeconds = 0;
   Timer? _phaseTimer;
   Timer? botChatTimer;
+  Timer? _heartbeatTimer;       // Heartbeat: cập nhật lastSeen định kỳ
+  Timer? _zombieTimer;          // Quét và kick/kill zombie
+  Timer? _hunterTimeoutTimer;   // Timeout cho kỹ năng Thợ Săn
   StreamSubscription? _roomSubscription;
   Timestamp? _lastSyncedEndTime;
+  int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
+
+  // Dữ liệu theo dõi kết nối
+  Map<String, Timestamp> _serverLastSeenMap = {};
+  Map<String, DateTime> _localLastSeenMap = {};
+  String? _currentHostName;
 
   bool hasUsedSeerScan = false;
   bool hasUsedBodyguardProtect = false;
@@ -61,59 +71,59 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   final List<RoleDefinition> roleDefinitions = [
     RoleDefinition(
-      id: 'dan', name: 'role_dan', description: 'role_dan_desc', team: RoleTeam.villager, icon: Icons.person, 
-      primaryColor: const Color(0xFF2E7D32), secondaryColor: const Color(0xFF4CAF50), isUnique: false,
-      difficulty: 1, lore: 'role_dan_lore', tips: ['tip_dan_1', 'tip_dan_2']
+        id: 'dan', name: 'role_dan', description: 'role_dan_desc', team: RoleTeam.villager, icon: Icons.person,
+        primaryColor: const Color(0xFF2E7D32), secondaryColor: const Color(0xFF4CAF50), isUnique: false,
+        difficulty: 1, lore: 'role_dan_lore', tips: ['tip_dan_1', 'tip_dan_2']
     ),
     RoleDefinition(
-      id: 'soi', name: 'role_soi', description: 'role_soi_desc', team: RoleTeam.werewolf, icon: Icons.pets, 
-      primaryColor: const Color(0xFFC62828), secondaryColor: const Color(0xFFEF5350), isUnique: false,
-      difficulty: 2, lore: 'role_soi_lore', tips: ['tip_soi_1', 'tip_soi_2']
+        id: 'soi', name: 'role_soi', description: 'role_soi_desc', team: RoleTeam.werewolf, icon: Icons.pets,
+        primaryColor: const Color(0xFFC62828), secondaryColor: const Color(0xFFEF5350), isUnique: false,
+        difficulty: 2, lore: 'role_soi_lore', tips: ['tip_soi_1', 'tip_soi_2']
     ),
     RoleDefinition(
-      id: 'soi_nguyen', name: 'role_soi_nguyen', description: 'role_soi_nguyen_desc', team: RoleTeam.werewolf, icon: Icons.auto_awesome, 
-      primaryColor: const Color(0xFF8E24AA), secondaryColor: const Color(0xFFBA68C8), isUnique: true,
-      difficulty: 4, lore: 'role_soi_nguyen_lore', tips: ['tip_soi_nguyen_1']
+        id: 'soi_nguyen', name: 'role_soi_nguyen', description: 'role_soi_nguyen_desc', team: RoleTeam.werewolf, icon: Icons.auto_awesome,
+        primaryColor: const Color(0xFF8E24AA), secondaryColor: const Color(0xFFBA68C8), isUnique: true,
+        difficulty: 4, lore: 'role_soi_nguyen_lore', tips: ['tip_soi_nguyen_1']
     ),
     RoleDefinition(
-      id: 'soi_dau_dan', name: 'role_soi_dau_dan', description: 'role_soi_dau_dan_desc', team: RoleTeam.werewolf, icon: Icons.gavel, 
-      primaryColor: const Color(0xFFD84315), secondaryColor: const Color(0xFFFF7043), isUnique: true,
-      difficulty: 3, lore: 'role_soi_dau_dan_lore', tips: ['tip_soi_dau_dan_1']
+        id: 'soi_dau_dan', name: 'role_soi_dau_dan', description: 'role_soi_dau_dan_desc', team: RoleTeam.werewolf, icon: Icons.gavel,
+        primaryColor: const Color(0xFFD84315), secondaryColor: const Color(0xFFFF7043), isUnique: true,
+        difficulty: 3, lore: 'role_soi_dau_dan_lore', tips: ['tip_soi_dau_dan_1']
     ),
     RoleDefinition(
-      id: 'xa_thu', name: 'role_xa_thu', description: 'role_xa_thu_desc', team: RoleTeam.villager, icon: Icons.gps_fixed, 
-      primaryColor: const Color(0xFF0277BD), secondaryColor: const Color(0xFF29B6F6), isUnique: true,
-      difficulty: 3, lore: 'role_xa_thu_lore', tips: ['tip_xa_thu_1']
+        id: 'xa_thu', name: 'role_xa_thu', description: 'role_xa_thu_desc', team: RoleTeam.villager, icon: Icons.gps_fixed,
+        primaryColor: const Color(0xFF0277BD), secondaryColor: const Color(0xFF29B6F6), isUnique: true,
+        difficulty: 3, lore: 'role_xa_thu_lore', tips: ['tip_xa_thu_1']
     ),
     RoleDefinition(
-      id: 'tien_tri', name: 'role_tien_tri', description: 'role_tien_tri_desc', team: RoleTeam.villager, icon: Icons.remove_red_eye, 
-      primaryColor: const Color(0xFF00838F), secondaryColor: const Color(0xFF26C6DA), isUnique: true,
-      difficulty: 3, lore: 'role_tien_tri_lore', tips: ['tip_tien_tri_1', 'tip_tien_tri_2']
+        id: 'tien_tri', name: 'role_tien_tri', description: 'role_tien_tri_desc', team: RoleTeam.villager, icon: Icons.remove_red_eye,
+        primaryColor: const Color(0xFF00838F), secondaryColor: const Color(0xFF26C6DA), isUnique: true,
+        difficulty: 3, lore: 'role_tien_tri_lore', tips: ['tip_tien_tri_1', 'tip_tien_tri_2']
     ),
     RoleDefinition(
-      id: 'cupid', name: 'role_cupid', description: 'role_cupid_desc', team: RoleTeam.neutral, icon: Icons.favorite,
-      primaryColor: const Color(0xFFAD1457), secondaryColor: const Color(0xFFEC407A), isUnique: true,
-      difficulty: 4, lore: 'role_cupid_lore', tips: ['tip_cupid_1']
+        id: 'cupid', name: 'role_cupid', description: 'role_cupid_desc', team: RoleTeam.neutral, icon: Icons.favorite,
+        primaryColor: const Color(0xFFAD1457), secondaryColor: const Color(0xFFEC407A), isUnique: true,
+        difficulty: 4, lore: 'role_cupid_lore', tips: ['tip_cupid_1']
     ),
     RoleDefinition(
-      id: 'tho_san', name: 'role_tho_san', description: 'role_tho_san_desc', team: RoleTeam.villager, icon: Icons.colorize, 
-      primaryColor: const Color(0xFFEF6C00), secondaryColor: const Color(0xFFFFA726), isUnique: true,
-      difficulty: 2, lore: 'role_tho_san_lore', tips: ['tip_tho_san_1']
+        id: 'tho_san', name: 'role_tho_san', description: 'role_tho_san_desc', team: RoleTeam.villager, icon: Icons.colorize,
+        primaryColor: const Color(0xFFEF6C00), secondaryColor: const Color(0xFFFFA726), isUnique: true,
+        difficulty: 2, lore: 'role_tho_san_lore', tips: ['tip_tho_san_1']
     ),
     RoleDefinition(
-      id: 'bao_ve', name: 'role_bao_ve', description: 'role_bao_ve_desc', team: RoleTeam.villager, icon: Icons.shield, 
-      primaryColor: const Color(0xFF1565C0), secondaryColor: const Color(0xFF42A5F5), isUnique: true,
-      difficulty: 4, lore: 'role_bao_ve_lore', tips: ['tip_bao_ve_1', 'tip_bao_ve_2']
+        id: 'bao_ve', name: 'role_bao_ve', description: 'role_bao_ve_desc', team: RoleTeam.villager, icon: Icons.shield,
+        primaryColor: const Color(0xFF1565C0), secondaryColor: const Color(0xFF42A5F5), isUnique: true,
+        difficulty: 4, lore: 'role_bao_ve_lore', tips: ['tip_bao_ve_1', 'tip_bao_ve_2']
     ),
     RoleDefinition(
-      id: 'phu_thuy', name: 'role_phu_thuy', description: 'role_phu_thuy_desc', team: RoleTeam.villager, icon: Icons.science, 
-      primaryColor: const Color(0xFF6A1B9A), secondaryColor: const Color(0xFFAB47BC), isUnique: true,
-      difficulty: 5, lore: 'role_phu_thuy_lore', tips: ['tip_phu_thuy_1', 'tip_phu_thuy_2']
+        id: 'phu_thuy', name: 'role_phu_thuy', description: 'role_phu_thuy_desc', team: RoleTeam.villager, icon: Icons.science,
+        primaryColor: const Color(0xFF6A1B9A), secondaryColor: const Color(0xFFAB47BC), isUnique: true,
+        difficulty: 5, lore: 'role_phu_thuy_lore', tips: ['tip_phu_thuy_1', 'tip_phu_thuy_2']
     ),
     RoleDefinition(
-      id: 'nerd', name: 'role_nerd', description: 'role_nerd_desc', team: RoleTeam.neutral, icon: Icons.psychology, 
-      primaryColor: const Color(0xFF9E9D24), secondaryColor: const Color(0xFFD4E157), isUnique: true,
-      difficulty: 4, lore: 'role_nerd_lore', tips: ['tip_nerd_1']
+        id: 'nerd', name: 'role_nerd', description: 'role_nerd_desc', team: RoleTeam.neutral, icon: Icons.psychology,
+        primaryColor: const Color(0xFF9E9D24), secondaryColor: const Color(0xFFD4E157), isUnique: true,
+        difficulty: 4, lore: 'role_nerd_lore', tips: ['tip_nerd_1']
     ),
   ];
 
@@ -142,7 +152,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final savedName = prefs.getString('player_name');
     userName = savedName ?? 'Người chơi ${Random().nextInt(9999)}';
     _isNameLoaded = true;
-    
+
     if (currentState == PlayState.setup) {
       lobbyPlayerNames = [userName];
       notifyListeners();
@@ -160,10 +170,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached || state == AppLifecycleState.inactive) {
-      if (roomCode.isNotEmpty) {
-        firestoreSvc.leaveRoom(roomCode, userName);
-      }
+    if (state == AppLifecycleState.resumed) {
+      // Khi quay lại tab/app, ngay lập tức gửi tín hiệu active
+      _updateActivity();
     }
   }
 
@@ -176,18 +185,22 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         _handleRoomDeleted();
         return;
       }
-      
+
       final data = snapshot.data();
       if (data != null) {
         final List playersData = data['players'] ?? [];
         final List messagesData = data['messages'] ?? [];
         final int serverPhaseNumber = data['phaseNumber'] ?? 0;
-        
+
         lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
         playerCount = data['playerCount'] ?? playerCount;
         dayNumber = data['dayNumber'] ?? dayNumber;
         phaseNumber = serverPhaseNumber;
         cursedPlayerId = data['cursedPlayerId'];
+
+        if (data.containsKey('isPublic')) {
+          isRoomLocked = !(data['isPublic'] as bool);
+        }
 
         // ĐỒNG BỘ THỜI GIAN: Chỉ reset timer nếu thời gian kết thúc trên server thay đổi
         if (data['phaseEndTime'] != null) {
@@ -201,21 +214,40 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
 
         // CẬP NHẬT TRẠNG THÁI NGƯỜI CHƠI TỪ FIREBASE
-        if (playersData.isNotEmpty && currentState == PlayState.playing) {
-          for (int i = 0; i < players.length; i++) {
-            final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
-            if (pData != null) {
-              players[i].isAlive = pData['isAlive'] ?? true;
-              players[i].voteCount = pData['voteCount'] ?? 0;
-              players[i].isHost = pData['isHost'] ?? false;
-              players[i].isProtected = pData['isProtected'] ?? false;
-              players[i].isPoisoned = pData['isPoisoned'] ?? false;
-              players[i].wasProtectedByBodyguard = pData['wasProtectedByBodyguard'] ?? false;
-              players[i].wasHealedByWitch = pData['wasHealedByWitch'] ?? false;
-              
-              // Cập nhật lại reference cho myPlayer để đảm bảo nhận diện đúng bản thân
-              if (players[i].name == userName) {
-                myPlayer = players[i];
+        if (playersData.isNotEmpty) {
+          final hostData = playersData.firstWhere((p) => p['isHost'] == true, orElse: () => null);
+          if (hostData != null) {
+            _currentHostName = hostData['name'];
+          }
+
+          for (var pData in playersData) {
+            final String pName = pData['name'];
+            final Timestamp? serverLastSeen = pData['lastSeen'];
+
+            if (serverLastSeen != null) {
+              final prevServerLastSeen = _serverLastSeenMap[pName];
+              if (prevServerLastSeen == null || prevServerLastSeen != serverLastSeen) {
+                _serverLastSeenMap[pName] = serverLastSeen;
+                _localLastSeenMap[pName] = DateTime.now();
+              }
+            }
+          }
+
+          if (currentState == PlayState.playing) {
+            for (int i = 0; i < players.length; i++) {
+              final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
+              if (pData != null) {
+                players[i].isAlive = pData['isAlive'] ?? true;
+                players[i].voteCount = pData['voteCount'] ?? 0;
+                players[i].isHost = pData['isHost'] ?? false;
+                players[i].isProtected = pData['isProtected'] ?? false;
+                players[i].isPoisoned = pData['isPoisoned'] ?? false;
+                players[i].wasProtectedByBodyguard = pData['wasProtectedByBodyguard'] ?? false;
+                players[i].wasHealedByWitch = pData['wasHealedByWitch'] ?? false;
+
+                if (players[i].name == userName) {
+                  myPlayer = players[i];
+                }
               }
             }
           }
@@ -237,6 +269,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           content: m['content'],
           targetName: m['targetName'],
           isSystem: m['isSystem'] ?? false,
+          isWerewolfOnly: m['isWerewolfOnly'] ?? false,
+          isGhost: m['isGhost'] ?? false,
           time: (m['time'] as Timestamp).toDate(),
         )).toList();
 
@@ -262,7 +296,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       final p = entry.value;
       final roleId = p['roleId'] ?? 'dan';
       final role = roleDefinitions.firstWhere((r) => r.id == roleId, orElse: () => roleDefinitions[0]);
-      
+
       final player = OnlinePlayer(
         id: i + 1,
         name: p['name'],
@@ -314,18 +348,21 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _triggerNextPhaseOnFirestore() {
-    // Chỉ Host hoặc người chơi có clock nhanh nhất sẽ kích hoạt chuyển phase
-    // Firestore Transaction đảm bảo phase chỉ chuyển ĐÚNG 1 LẦN.
+    // Chỉ HOST mới được quyền kích hoạt chuyển phase để tránh race condition
+    // khi nhiều máy có đồng hồ khác nhau cùng gọi đồng thời.
+    final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+    if (!isHost) return;
+
     String next;
     int duration;
     if (currentPhase == GamePhase.night) {
-      next = 'day'; 
+      next = 'day';
       duration = durationDay;
     } else if (currentPhase == GamePhase.day) {
-      next = 'voting'; 
+      next = 'voting';
       duration = durationVoting;
     } else {
-      next = 'night'; 
+      next = 'night';
       duration = durationNight;
     }
     firestoreSvc.secureNextPhase(roomCode, phaseNumber, next, duration);
@@ -343,9 +380,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   // --- 2. XỬ LÝ CHUYỂN GIAI ĐOẠN ---
   void _handlePhaseTransitionFromServer(GamePhase newPhase) {
-    // Trong chế độ Online, chúng ta không tự tính toán kết quả locally 
+    // Trong chế độ Online, chúng ta không tự tính toán kết quả locally
     // vì Server (Firestore Transaction) đã làm điều đó và cập nhật vào danh sách players.
-    
+
     currentPhase = newPhase;
 
     if (newPhase == GamePhase.day) {
@@ -381,8 +418,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     lobbyPlayerNames = [userName];
     notifyListeners();
     try {
-      await firestoreSvc.createRoom(roomCode, userName, playerCount);
+      await firestoreSvc.createRoom(roomCode, userName, playerCount, isPublic: !isRoomLocked);
       listenToRoom(roomCode);
+      _startHeartbeat(); // Bắt đầu heartbeat khi tạo phòng
+      _startZombieDetection(); // Bắt đầu phát hiện Zombie
     } catch (e) {
       currentState = PlayState.setup;
       notifyListeners();
@@ -391,11 +430,34 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> joinExistingRoom(String code, String name) async {
     try {
-      await firestoreSvc.joinRoom(code, name);
+      String finalName = name;
+      bool joined = false;
+      int attempts = 0;
+
+      while (!joined && attempts < 5) {
+        try {
+          await firestoreSvc.joinRoom(code, finalName);
+          joined = true;
+        } catch (e) {
+          if (e.toString().contains('username_already_exists')) {
+            finalName = '${name}_${Random().nextInt(99)}';
+            attempts++;
+          } else {
+            rethrow;
+          }
+        }
+      }
+
+      if (!joined) {
+        throw Exception('Cannot join room due to name conflict');
+      }
+
       roomCode = code;
-      userName = name;
+      userName = finalName;
       currentState = PlayState.lobby;
       listenToRoom(roomCode);
+      _startHeartbeat(); // Bắt đầu heartbeat khi vào phòng
+      _startZombieDetection(); // Bắt đầu phát hiện Zombie
       notifyListeners();
     } catch (e) {
       rethrow;
@@ -406,11 +468,96 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (roomCode.isNotEmpty) {
       final codeToLeave = roomCode;
       _roomSubscription?.cancel();
+      _heartbeatTimer?.cancel(); // Dừng heartbeat khi rời phòng
+      _zombieTimer?.cancel();
+      _serverLastSeenMap.clear();
+      _localLastSeenMap.clear();
+      _currentHostName = null;
+      _heartbeatTimer = null;
       roomCode = '';
       currentState = PlayState.setup;
+      isRoomLocked = false; // Reset lock state when leaving room
       notifyListeners();
       firestoreSvc.leaveRoom(codeToLeave, userName).catchError((e) => debugPrint(e.toString()));
     }
+  }
+
+  void toggleRoomLock(bool locked) {
+    isRoomLocked = locked;
+    notifyListeners();
+    if (roomCode.isNotEmpty && currentState == PlayState.lobby) {
+      final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+      if (isHost) {
+        firestoreSvc.updateRoomData(roomCode, {'isPublic': !locked});
+      }
+    }
+  }
+
+  /// Bắt đầu gửi heartbeat định kỳ (mỗi 15 giây) lên Firebase
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (roomCode.isNotEmpty && userName.isNotEmpty) {
+        firestoreSvc.updateLastSeen(roomCode, userName);
+      }
+    });
+    // Gửi ngay lần đầu
+    if (roomCode.isNotEmpty && userName.isNotEmpty) {
+      firestoreSvc.updateLastSeen(roomCode, userName);
+    }
+  }
+
+  /// Cập nhật thời gian hoạt động cuối cùng của người chơi
+  void _updateActivity() {
+    if (roomCode.isNotEmpty && userName.isNotEmpty) {
+      firestoreSvc.updateLastSeen(roomCode, userName);
+    }
+  }
+
+  /// Khởi chạy cơ chế phát hiện và xử lý Zombie (mất kết nối)
+  void _startZombieDetection() {
+    _zombieTimer?.cancel();
+    _zombieTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (roomCode.isEmpty) return;
+
+      final now = DateTime.now();
+      final isHost = _currentHostName == userName;
+
+      if (isHost) {
+        // Chủ phòng kiểm tra tất cả những người khác
+        for (var pName in lobbyPlayerNames) {
+          if (pName == userName) continue;
+          final lastSeen = _localLastSeenMap[pName];
+          if (lastSeen != null && now.difference(lastSeen).inSeconds > 120) {
+            if (currentState == PlayState.lobby) {
+              // Kick người chơi khỏi phòng nếu đang ở sảnh
+              firestoreSvc.leaveRoom(roomCode, pName);
+            } else if (currentState == PlayState.playing) {
+              // Giết người chơi nếu đang trong trận
+              final player = players.firstWhere((p) => p.name == pName, orElse: () => OnlinePlayer(id: -1, name: '', role: roleDefinitions[0]));
+              if (player.id != -1 && player.isAlive) {
+                firestoreSvc.updatePlayerField(roomCode, player.id, {'isAlive': false});
+                firestoreSvc.sendChatMessage(roomCode, {
+                  'senderName': 'system',
+                  'content': '$pName đã mất kết nối và tử vong.',
+                  'isSystem': true,
+                  'time': Timestamp.now()
+                });
+              }
+            }
+          }
+        }
+      } else {
+        // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
+        if (_currentHostName != null) {
+          final hostLastSeen = _localLastSeenMap[_currentHostName!];
+          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 120) {
+            // Host đã chết -> Gọi leaveRoom để buộc server đổi Host (Host Migration)
+            firestoreSvc.leaveRoom(roomCode, _currentHostName!);
+          }
+        }
+      }
+    });
   }
 
   void startQuickMatch({bool isOnline = false}) async {
@@ -427,15 +574,15 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     for (int i = 0; i < 14; i++) {
       finalNames.add('${botNames[i]} (Bot)');
     }
-    
+
     List<RoleDefinition> roles = [];
-    int targetWolves = 4; 
+    int targetWolves = 4;
     roles.add(roleDefinitions.firstWhere((r) => r.id == 'soi_dau_dan'));
     roles.add(roleDefinitions.firstWhere((r) => r.id == 'soi_nguyen'));
     while (roles.length < targetWolves) {
       roles.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
     }
-    
+
     List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
     roles.addAll(specials.take(min(specials.length, playerCount - roles.length)));
     while (roles.length < playerCount) {
@@ -479,37 +626,44 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       // THUẬT TOÁN GHÉP TRẬN TỐI ƯU:
-      // Thử tìm phòng trong 6 vòng với tốc độ nhanh (mỗi 1.5s)
-      // Điều này giúp người dùng "hội quân" vào phòng đông nhất cực nhanh.
-      for (int attempt = 0; attempt < 6; attempt++) {
-        // Delay ngẫu nhiên ngắn (200-500ms) ở vòng đầu để phân cấp máy khách nào sẽ là người tạo phòng
-        int initialJitter = (attempt == 0) ? Random().nextInt(500) : 0;
-        await Future.delayed(Duration(milliseconds: 1500 + initialJitter));
+      // Vòng 1: Tìm ngay lập tức (không delay) để vào phòng có sẵn nhanh nhất.
+      // Các vòng sau: Delay 1s mỗi vòng. Tổng cộng 8 vòng (~8 giây) trước khi tạo phòng mới.
+      for (int attempt = 0; attempt < 8; attempt++) {
+        // Chỉ delay từ vòng 2 trở đi. Vòng đầu tìm ngay.
+        if (attempt > 0) {
+          // Delay ngẫu nhiên 800-1200ms để tránh race condition khi nhiều client cùng tạo phòng
+          int jitter = 800 + Random().nextInt(400);
+          await Future.delayed(Duration(milliseconds: jitter));
+        }
 
         if (currentState != PlayState.matchmaking) return;
 
-        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1})...');
-        String? foundRoomCode = await firestoreSvc.findPublicRoom();
+        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1}/8)...');
+        String? foundRoomCode;
+        try {
+          foundRoomCode = await firestoreSvc.findPublicRoom();
+        } catch (e) {
+          debugPrint('Matchmaking error during query: $e');
+        }
 
         if (foundRoomCode != null) {
           try {
             await joinExistingRoom(foundRoomCode, userName);
             debugPrint('Matchmaking SUCCESS: Joined room $foundRoomCode');
-            return; 
+            return;
           } catch (e) {
             debugPrint('Matchmaking: Room $foundRoomCode just became full/invalid, searching next...');
           }
         }
       }
 
-      // Nếu sau ~10 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
+      // Nếu sau ~8 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
       if (currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
-        await firestoreSvc.createRoom(roomCode, userName, 15, isPublic: true);
-        
-        currentState = PlayState.lobby;
-        listenToRoom(roomCode);
+        playerCount = 15;
+        isRoomLocked = false;
+        await createRoom();
       }
     } catch (e) {
       debugPrint('Matchmaking error: $e');
@@ -534,7 +688,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     while (roles.length < targetWolves) {
       roles.add(roleDefinitions.firstWhere((r) => r.id == 'soi'));
     }
-    
+
     List<RoleDefinition> specials = roleDefinitions.where((r) => r.isUnique && r.team != RoleTeam.werewolf).toList()..shuffle(random);
     roles.addAll(specials.take(min(specials.length, actualPlayerCount - roles.length)));
     while (roles.length < actualPlayerCount) {
@@ -552,7 +706,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void resetGame() {
     stopPeriodicBotChat();
     _phaseTimer?.cancel();
+    _zombieTimer?.cancel();
+    _serverLastSeenMap.clear();
+    _localLastSeenMap.clear();
+    _currentHostName = null;
     currentState = PlayState.lobby;
+    isRoomLocked = false;
     selectedPlayer = null;
     players = [];
     isNerdHanged = false;
@@ -563,11 +722,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void updatePlayerCount(int count) { 
-    playerCount = count; 
-    notifyListeners(); 
+  void updatePlayerCount(int count) {
+    playerCount = count;
+    notifyListeners();
   }
-  
+
   void selectPlayer(OnlinePlayer? player) {
     if (player == null) {
       selectedPlayer = null;
@@ -597,9 +756,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void syncGameState() {
     if (roomCode.isEmpty) return;
-    
+
     // Đồng bộ danh sách người chơi (bao gồm trạng thái sống/chết và các hiệu ứng)
-    // Lưu ý: Trong chế độ Online, Host thường là người chịu trách nhiệm chính đồng bộ 
+    // Lưu ý: Trong chế độ Online, Host thường là người chịu trách nhiệm chính đồng bộ
     // hoặc mỗi người chơi tự cập nhật hành động của mình qua các hàm execute riêng.
     final List<Map<String, dynamic>> playersMaps = players.map((p) {
       // Kết hợp dữ liệu role (không đổi) và dữ liệu trạng thái (thay đổi)
@@ -669,25 +828,28 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void sendUserMessage(String text, {bool forceWerewolfOnly = false}) {
     if (text.trim().isEmpty) return;
-    
+
     // Nếu forceWerewolfOnly = true hoặc đang trong đêm và là Sói
     final isWolfChannel = forceWerewolfOnly || (currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf);
     final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
-    
+
     if (roomCode.isEmpty) {
+      // OFFLINE: Thêm tin nhắn local và giả lập phản hồi bot
       chatMessages.add(ChatMessage(senderName: userName, content: text, isWerewolfOnly: isWolfChannel, isGhost: isGhost, time: DateTime.now()));
       simulateBotChatResponse(text);
       notifyListeners();
     } else {
+      // ONLINE: Gửi lên Firestore (stream sẽ tự cập nhật lại chatMessages)
       firestoreSvc.sendChatMessage(roomCode, {
-        'senderName': userName, 
-        'content': text, 
-        'isWerewolfOnly': isWolfChannel, 
-        'isGhost': isGhost, 
-        'isSystem': false, 
+        'senderName': userName,
+        'content': text,
+        'isWerewolfOnly': isWolfChannel,
+        'isGhost': isGhost,
+        'isSystem': false,
         'time': Timestamp.now()
       });
     }
+    _updateActivity();
   }
 
   bool isChatDisabled() {
@@ -830,10 +992,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = null;
     selectedPlayer = null;
     werewolfTarget = null;
+    _myNightBiteTargetId = null; // Reset mục tiêu cắn khi bắt đầu ngày mới
   }
 
   void _resetLocalDayStates() {
     addLog(langSvc.t('voting_start'));
+    _myCurrentVoteTargetId = null; // Reset vote target mỗi khi vào ban ngày
     for (var p in players) {
       p.voteCount = 0;
       p.isTargeted = false;
@@ -841,35 +1005,52 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _resetLocalVotingStates() {
+    _myCurrentVoteTargetId = null; // Reset vote target khi bắt đầu đêm mới
     for (var p in players) {
       p.voteCount = 0;
+      p.isTargeted = false; // Reset isTargeted khi bắt đầu đêm mới
     }
     addLog('${langSvc.t('night_number')} $dayNumber ${langSvc.t('night_start')}');
   }
 
   void executeVote(OnlinePlayer target) {
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
-    for (var p in players) {
-      if (p.isTargeted) {
-        p.voteCount -= weight;
-        p.isTargeted = false;
+
+    if (roomCode.isNotEmpty) {
+      // ONLINE: dùng Transaction để tránh race condition ghi đè mảng
+      final oldTargetId = _myCurrentVoteTargetId;
+      _myCurrentVoteTargetId = target.id;
+      // Cập nhật local ngay lập tức để UI phản hồi nhanh
+      for (var p in players) {
+        if (p.id == oldTargetId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+        if (p.id == target.id) p.voteCount += weight;
       }
+      // Sau đó đồng bộ lên server an toàn bằng Transaction
+      firestoreSvc.submitVoteTransaction(roomCode, oldTargetId, target.id, weight);
+    } else {
+      // OFFLINE: ghi thẳng vào local state
+      for (var p in players) {
+        if (p.isTargeted) {
+          p.voteCount -= weight;
+          p.isTargeted = false;
+        }
+      }
+      target.voteCount += weight;
+      target.isTargeted = true;
     }
-    target.voteCount += weight;
-    target.isTargeted = true;
-    syncGameState();
+    _updateActivity();
     notifyListeners();
   }
 
   void killPlayer(OnlinePlayer player, String reason) {
     if (!player.isAlive) return;
     player.isAlive = false;
-    
+
     // Chỉ thêm log nếu không phải đang trong trận online (online dùng system messages)
     if (roomCode.isEmpty) {
       addLog(reason);
     }
-    
+
     if (lover1 != null && lover2 != null) {
       if (player.id == lover1!.id && lover2!.isAlive) {
         killPlayer(lover2!, langSvc.t('lover_tragedy'));
@@ -877,12 +1058,16 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         killPlayer(lover1!, langSvc.t('lover_tragedy'));
       }
     }
-    
+
     // Logic kỹ năng thợ săn
     if (player.role.id == 'tho_san') {
       if (player.id == myPlayer?.id) {
-        hunterSkillTriggered = true;
-        hunterWhoDied = player;
+        if (roomCode.isNotEmpty) {
+          _triggerHunterSkill(player); // Online: kích hoạt và set timeout
+        } else {
+          hunterSkillTriggered = true;
+          hunterWhoDied = player;
+        }
       } else if (roomCode.isEmpty) {
         simulateBotHunterShot(player);
       }
@@ -894,8 +1079,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasUsedSeerScan = true;
     final isW = target.role.team == RoleTeam.werewolf || target.id == cursedPlayerId;
     addLog(langSvc.t('seer_result').replaceFirst('%s', target.name).replaceFirst('%s', isW ? langSvc.t('wolf_red') : langSvc.t('villager_green')));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      // Online: chỉ cập nhật field cục bộ (hasBeenScannedBySeer chỉ lưu local)
+      // Không cần đồng bộ lên server vì chỉ Tiên Tri mới thấy
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -905,8 +1096,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasUsedBodyguardProtect = true;
     lastProtectedPlayerId = target.id;
     addLog(langSvc.t('guard_log').replaceFirst('%s', target.name));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      // Online: dùng Transaction để chỉ cập nhật đúng các field của mục tiêu
+      firestoreSvc.updatePlayerField(roomCode, target.id, {
+        'isProtected': true,
+        'wasProtectedByBodyguard': true,
+      });
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -921,8 +1121,19 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
     hasHealPotion = false;
     hasUsedHealThisNight = true;
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {
+        'isProtected': target.isAlive ? true : false,
+        'wasHealedByWitch': true,
+      });
+      if (!target.isAlive) {
+        firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
+      }
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -930,28 +1141,58 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     target.isPoisoned = true;
     hasPoisonPotion = false;
     hasUsedPoisonThisNight = true;
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {'isPoisoned': true});
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
+  // _myNightBiteTargetId: ID mục tiêu bị cắn của sói (TÁCH BIỆT hoàn toàn với vote ban ngày)
+  int? _myNightBiteTargetId;
+
   void executeWerewolfBite(OnlinePlayer target) {
-    executeVote(target);
+    final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
+    final oldBiteId = _myNightBiteTargetId;
+    _myNightBiteTargetId = target.id;
+
+    // Cập nhật voteCount local (chỉ dùng để hiển thị trong đêm cho nhóm sói)
+    for (var p in players) {
+      if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+    }
+    target.voteCount += weight;
+
     _updateWerewolfLeadingTarget();
-    syncGameState();
+
+    // Đồng bộ mục tiêu cắn lên server (dùng Transaction riêng cho bite)
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, target.id, weight);
+      firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': target.id});
+    }
+    _updateActivity();
     notifyListeners();
   }
 
   void cancelWerewolfBite() {
+    if (_myNightBiteTargetId == null) return;
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
+    final oldBiteId = _myNightBiteTargetId;
+    _myNightBiteTargetId = null;
+
     for (var p in players) {
-      if (p.isTargeted) {
-        p.voteCount -= weight;
-        p.isTargeted = false;
-      }
+      if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
     }
     _updateWerewolfLeadingTarget();
-    syncGameState();
+
+    if (roomCode.isNotEmpty) {
+      // Xoá vote bite trên server
+      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, -1, weight); // -1 = không ai
+      firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': null});
+    }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -972,9 +1213,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     lover2 = cupidSelections[1];
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'lover1Id': lover1!.id, 'lover2Id': lover2!.id});
+    } else {
+      syncGameState();
     }
-    syncGameState();
     selectedPlayer = null;
+    _updateActivity();
     notifyListeners();
   }
 
@@ -982,8 +1225,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = target.id;
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'cursedPlayerId': cursedPlayerId});
+    } else {
+      syncGameState();
     }
-    syncGameState();
+    _updateActivity();
     notifyListeners();
   }
 
@@ -991,37 +1236,66 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = null;
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'cursedPlayerId': null});
+    } else {
+      syncGameState();
     }
-    syncGameState();
+    _updateActivity();
     notifyListeners();
   }
-  
+
   void cancelBodyguardProtect() {
+    Map<int, Map<String, dynamic>> updates = {};
     for (var p in players) {
       if (p.wasProtectedByBodyguard) {
         p.isProtected = false;
         p.wasProtectedByBodyguard = false;
+        updates[p.id] = {'isProtected': false, 'wasProtectedByBodyguard': false};
       }
     }
     hasUsedBodyguardProtect = false;
     lastProtectedPlayerId = null;
+    if (roomCode.isNotEmpty && updates.isNotEmpty) {
+      firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+    } else if (roomCode.isEmpty) {
+      syncGameState();
+    }
+    _updateActivity();
     notifyListeners();
   }
 
   void cancelWitchAction() {
+    Map<int, Map<String, dynamic>> updates = {};
     if (hasUsedHealThisNight) {
       for (var p in players) {
-        p.wasHealedByWitch = false;
+        if (p.wasHealedByWitch) {
+          p.wasHealedByWitch = false;
+          updates[p.id] = {'wasHealedByWitch': false};
+        }
       }
       hasHealPotion = true;
       hasUsedHealThisNight = false;
+      if (roomCode.isNotEmpty) {
+        if (updates.isNotEmpty) firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+        firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': null});
+      } else {
+        syncGameState();
+      }
     } else if (hasUsedPoisonThisNight) {
       for (var p in players) {
-        p.isPoisoned = false;
+        if (p.isPoisoned) {
+          p.isPoisoned = false;
+          updates[p.id] = {'isPoisoned': false};
+        }
       }
       hasPoisonPotion = true;
       hasUsedPoisonThisNight = false;
+      if (roomCode.isNotEmpty && updates.isNotEmpty) {
+        firestoreSvc.updateMultiplePlayerFields(roomCode, updates);
+      } else if (roomCode.isEmpty) {
+        syncGameState();
+      }
     }
+    _updateActivity();
     notifyListeners();
   }
 
@@ -1030,18 +1304,55 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     xathuBullets--;
     xathuRevealed = true;
     killPlayer(target, langSvc.t('gunner_log').replaceFirst('%s', target.name));
-    syncGameState();
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+    } else {
+      syncGameState();
+    }
     selectedPlayer = null;
+    _updateActivity();
     checkGameOver();
     notifyListeners();
   }
 
-  void executeHunterShot(OnlinePlayer target) {
+  void executeHunterShot(OnlinePlayer? target) {
+    _hunterTimeoutTimer?.cancel();
     hunterSkillTriggered = false;
-    killPlayer(target, langSvc.t('hunter_log').replaceFirst('%s', target.name));
-    syncGameState();
+
+    if (target != null) {
+      killPlayer(target, langSvc.t('hunter_log').replaceFirst('%s', target.name));
+      if (roomCode.isNotEmpty) {
+        firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+      }
+    }
+
+    if (roomCode.isNotEmpty) {
+      firestoreSvc.setHunterSkillActive(roomCode, false);
+    } else {
+      if (target != null) syncGameState();
+    }
+
+    _updateActivity();
     checkGameOver();
     notifyListeners();
+  }
+
+  /// Thợ Săn chết: kích hoạt kỹ năng + đặt timeout 15 giây
+  void _triggerHunterSkill(OnlinePlayer hunter) {
+    if (roomCode.isEmpty) return;
+    hunterSkillTriggered = true;
+    hunterWhoDied = hunter;
+    firestoreSvc.setHunterSkillActive(roomCode, true, hunterPlayerId: hunter.id);
+    notifyListeners();
+
+    // Timeout 15 giây: nếu Thợ Săn không bắn, tự động bỏ qua
+    _hunterTimeoutTimer?.cancel();
+    _hunterTimeoutTimer = Timer(const Duration(seconds: 15), () {
+      if (hunterSkillTriggered) {
+        debugPrint('Hunter timeout: auto-skipping hunter skill');
+        executeHunterShot(null);
+      }
+    });
   }
 
   String getActionInstructionText() {
@@ -1057,7 +1368,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   String checkGameOver() {
     if (currentState != PlayState.playing || players.isEmpty) return '';
-    
+
     // 1. Kiểm tra Kẻ Ngốc (Nerd) bị treo cổ
     if (isNerdHanged) {
       currentState = PlayState.ended;
@@ -1167,9 +1478,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final s = players.where((p) => p.isAlive && p.id != b.id).toList();
     if (s.isNotEmpty) {
       final t = s[Random().nextInt(s.length)];
-      final c = langSvc.currentLanguage == AppLanguage.vi 
-        ? ['Nghi P${t.id} nha.', 'P${t.id} im quá.', 'Soi P${t.id} đi.'][Random().nextInt(3)] 
-        : ['Suspecting P${t.id}.', 'P${t.id} is quiet.', 'Scan P${t.id}.'][Random().nextInt(3)];
+      final c = langSvc.currentLanguage == AppLanguage.vi
+          ? ['Nghi P${t.id} nha.', 'P${t.id} im quá.', 'Soi P${t.id} đi.'][Random().nextInt(3)]
+          : ['Suspecting P${t.id}.', 'P${t.id} is quiet.', 'Scan P${t.id}.'][Random().nextInt(3)];
       chatMessages.add(ChatMessage(senderName: b.name, content: c, time: DateTime.now()));
       notifyListeners();
     }
@@ -1202,15 +1513,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  @override 
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (roomCode.isNotEmpty) {
       leaveRoom();
     }
     _phaseTimer?.cancel();
-    botChatTimer?.cancel(); 
+    botChatTimer?.cancel();
     _roomSubscription?.cancel();
-    super.dispose(); 
+    _heartbeatTimer?.cancel();
+    _hunterTimeoutTimer?.cancel();
+    _zombieTimer?.cancel();
+    super.dispose();
   }
 }
