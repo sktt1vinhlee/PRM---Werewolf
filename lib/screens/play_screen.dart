@@ -894,10 +894,10 @@ class _PlayScreenState extends State<PlayScreen> {
               child: Text('P${player.id} - ${player.name}', textAlign: TextAlign.center, style: TextStyle(color: textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 6),
-            Icon(reveal ? _controller.getPlayerRoleIconDisplay(player) : Icons.help_outline, color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), size: 22),
+            Icon(reveal ? _controller.getPlayerRoleIconDisplay(player) : Icons.help_outline, color: player.isAlive && reveal ? _controller.getPlayerRoleColorDisplay(player) : (isNight ? Colors.white24 : Colors.black12), size: 22),
             const SizedBox(height: 6),
             FittedBox(
-              child: Text(langSvc.t(_controller.getPlayerRoleNameDisplay(player)), textAlign: TextAlign.center, style: TextStyle(color: player.isAlive && reveal ? player.role.secondaryColor : (isNight ? Colors.white24 : Colors.black12), fontSize: 10, fontWeight: FontWeight.bold)),
+              child: Text(langSvc.t(_controller.getPlayerRoleNameDisplay(player)), textAlign: TextAlign.center, style: TextStyle(color: player.isAlive && reveal ? _controller.getPlayerRoleColorDisplay(player) : (isNight ? Colors.white24 : Colors.black12), fontSize: 10, fontWeight: FontWeight.bold)),
             ),
           ]),
         ),

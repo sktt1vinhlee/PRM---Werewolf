@@ -965,16 +965,33 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   String getPlayerRoleNameDisplay(OnlinePlayer player) {
     if (!shouldRevealRole(player)) return 'ẨN VAI TRÒ';
+    // Bản thân luôn thấy vai trò thật của mình, không bị đánh lừa bởi lời nguyền
+    if (player.id == myPlayer?.id) return player.role.name;
+    // Đối với người khác (như Tiên Tri), nếu bị nguyền thì hiện Ma Sói
     if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) return 'role_soi';
     return player.role.name;
   }
 
   IconData getPlayerRoleIconDisplay(OnlinePlayer player) {
     if (!shouldRevealRole(player)) return Icons.help_outline;
+    // Bản thân luôn thấy icon thật của mình
+    if (player.id == myPlayer?.id) return player.role.icon;
+    // Đối với người khác, nếu bị nguyền thì hiện icon sói
     if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) {
-      return Icons.pets; // Hiện icon sói khi bị nguyền
+      return Icons.pets;
     }
     return player.role.icon;
+  }
+
+  Color getPlayerRoleColorDisplay(OnlinePlayer player) {
+    if (!shouldRevealRole(player)) return Colors.transparent;
+    // Bản thân luôn thấy màu thật của mình
+    if (player.id == myPlayer?.id) return player.role.secondaryColor;
+    // Đối với người khác, nếu bị nguyền thì hiện màu đỏ của sói
+    if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) {
+      return const Color(0xFFEF5350); // Màu đỏ đặc trưng của Ma Sói
+    }
+    return player.role.secondaryColor;
   }
 
   bool shouldShowLoverHeart(OnlinePlayer player) {
