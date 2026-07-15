@@ -13,6 +13,7 @@ class OnlinePlayer {
   bool isHost;
   bool wasProtectedByBodyguard;
   bool wasHealedByWitch;
+  int? votedForId; // ID mục tiêu mà người chơi này đang vote (để đồng bộ)
 
   OnlinePlayer({
     required this.id,
@@ -27,6 +28,7 @@ class OnlinePlayer {
     this.isHost = false,
     this.wasProtectedByBodyguard = false,
     this.wasHealedByWitch = false,
+    this.votedForId,
   });
 
   Map<String, dynamic> toStatusMap() {

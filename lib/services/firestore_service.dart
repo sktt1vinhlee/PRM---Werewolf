@@ -55,7 +55,7 @@ class FirestoreService {
   Future<void> joinRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-
+      
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) {
@@ -94,14 +94,14 @@ class FirestoreService {
   Future<void> leaveRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-
+      
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
         List players = List.from(data['players'] ?? []);
-
+        
         int index = players.indexWhere((p) => p['name'] == userName);
         if (index == -1) return;
 
@@ -176,12 +176,12 @@ class FirestoreService {
   /// CHUYỂN PHASE AN TOÀN VÀ TÍNH TOÁN KẾT QUẢ
   Future<void> secureNextPhase(String roomCode, int expectedPhaseNumber, String nextPhase, int durationSeconds) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
-
+    
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-
+        
         final data = snapshot.data()!;
         int currentPN = data['phaseNumber'] ?? 0;
         if (currentPN != expectedPhaseNumber) return;
@@ -191,9 +191,19 @@ class FirestoreService {
         String currentPhase = data['currentPhase'] ?? 'night';
 
         if (currentPhase == 'night') {
-          int? victimId = data['werewolfTargetId'];
+          // TÍNH TOÁN NẠN NHÂN DỰA TRÊN PHIẾU BẦU CỦA SÓI
+          int maxVotes = 0;
+          int? victimId;
+          for (var p in players) {
+            int v = p['voteCount'] ?? 0;
+            if (v > maxVotes) {
+              maxVotes = v;
+              victimId = p['id'];
+            }
+          }
+          
           int? reviveId = data['witchReviveTargetId'];
-
+          
           for (var p in players) {
             if (p['id'] == victimId && victimId != null) {
               if (p['isProtected'] != true && p['id'] != reviveId) {
@@ -208,19 +218,13 @@ class FirestoreService {
             p['isProtected'] = false;
             p['isPoisoned'] = false;
             p['voteCount'] = 0;
+            p['votedForId'] = null; // QUAN TRỌNG: Reset dấu vết vote của từng người
             p['wasProtectedByBodyguard'] = false;
             p['wasHealedByWitch'] = false;
           }
-        }
+        } 
         else if (currentPhase == 'voting') {
-          int maxVotes = 0;
-          dynamic hangedPlayer;
-          for (var p in players) {
-            if ((p['voteCount'] ?? 0) > maxVotes) {
-              maxVotes = p['voteCount'];
-              hangedPlayer = p;
-            }
-          }
+          // ... (giữ nguyên logic tính maxVotes)
           if (hangedPlayer != null && maxVotes > 1) {
             hangedPlayer['isAlive'] = false;
             messages.add({'senderName': 'system', 'content': 'lynched', 'targetName': hangedPlayer['name'], 'isSystem': true, 'time': Timestamp.now()});
@@ -230,6 +234,7 @@ class FirestoreService {
           }
           for (var p in players) {
             p['voteCount'] = 0;
+            p['votedForId'] = null; // QUAN TRỌNG: Reset dấu vết vote của từng người
           }
         }
 
@@ -250,6 +255,16 @@ class FirestoreService {
         if (messages.isNotEmpty) {
           transaction.update(roomRef, {'messages': FieldValue.arrayUnion(messages)});
         }
+
+        // --- KIỂM TRA THẮNG CUỘC TRÊN SERVER ---
+        int wolves = players.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+        int others = players.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+
+        if (wolves == 0) {
+          transaction.update(roomRef, {'status': 'ended', 'winner': 'villagers'});
+        } else if (wolves >= others) {
+          transaction.update(roomRef, {'status': 'ended', 'winner': 'werewolves'});
+        }
       });
     } catch (e) {
       debugPrint('Error in secureNextPhase: $e');
@@ -257,30 +272,43 @@ class FirestoreService {
   }
 
   /// Xử lý Vote an toàn bằng Transaction
-  Future<void> submitVoteTransaction(String roomCode, int? oldTargetId, int newTargetId, int weight) async {
+  Future<void> submitVoteTransaction(String roomCode, String voterName, int newTargetId, int weight) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-
+        
         final data = snapshot.data()!;
         List players = List.from(data['players'] ?? []);
+        
+        int voterIndex = players.indexWhere((p) => p['name'] == voterName);
+        if (voterIndex == -1) return;
+        
+        int? oldTargetId = players[voterIndex]['votedForId'];
+        if (oldTargetId == newTargetId) return;
 
         bool changed = false;
-
-        for (var p in players) {
-          if (oldTargetId != null && p['id'] == oldTargetId) {
-            p['voteCount'] = (p['voteCount'] ?? 0) - weight;
-            if (p['voteCount'] < 0) p['voteCount'] = 0;
-            changed = true;
-          }
-          // newTargetId == -1 nghĩa là hủy bite (không tăng vote cho ai)
-          if (newTargetId != -1 && p['id'] == newTargetId) {
-            p['voteCount'] = (p['voteCount'] ?? 0) + weight;
+        
+        if (oldTargetId != null && oldTargetId != -1) {
+          int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
+          if (oldTargetIdx != -1) {
+            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - weight;
+            if (players[oldTargetIdx]['voteCount'] < 0) players[oldTargetIdx]['voteCount'] = 0;
             changed = true;
           }
         }
+
+        if (newTargetId != -1) {
+          int newTargetIdx = players.indexWhere((p) => p['id'] == newTargetId);
+          if (newTargetIdx != -1) {
+            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + weight;
+            changed = true;
+          }
+        }
+        
+        players[voterIndex]['votedForId'] = newTargetId;
+        changed = true;
 
         if (changed) {
           transaction.update(roomRef, {'players': players});
@@ -327,37 +355,25 @@ class FirestoreService {
   /// Tìm phòng ghép trận Online - Ưu tiên phòng đông người nhất để nhanh đủ người
   Future<String?> findPublicRoom() async {
     try {
-      // Lấy danh sách các phòng công khai đang chờ
       final snapshot = await _db
           .collection('rooms')
           .where('isPublic', isEqualTo: true)
           .where('status', isEqualTo: 'waiting')
-          .limit(20) // Lấy danh sách rộng hơn để chọn lọc tốt hơn
+          .limit(20)
           .get();
 
       if (snapshot.docs.isEmpty) return null;
 
-      // Sắp xếp trong bộ nhớ:
-      // 1. Ưu tiên phòng có nhiều người chơi nhất (nhưng chưa đầy)
-      // 2. Nếu cùng số người, ưu tiên phòng cũ hơn (createdAt tăng dần)
       final docs = snapshot.docs.toList();
       docs.sort((a, b) {
-        final dataA = a.data();
+        final data = a.data();
         final dataB = b.data();
-
-        int countA = dataA['currentPlayersCount'] ?? 0;
+        int countA = data['currentPlayersCount'] ?? 0;
         int countB = dataB['currentPlayersCount'] ?? 0;
-
-        if (countA != countB) {
-          return countB.compareTo(countA); // Giảm dần theo số người
-        }
-
-        // Nếu bằng số người, ưu tiên phòng tạo trước
-        Timestamp? timeA = dataA['createdAt'];
+        if (countA != countB) return countB.compareTo(countA);
+        Timestamp? timeA = data['createdAt'];
         Timestamp? timeB = dataB['createdAt'];
-        if (timeA != null && timeB != null) {
-          return timeA.compareTo(timeB); // Tăng dần theo thời gian
-        }
+        if (timeA != null && timeB != null) return timeA.compareTo(timeB);
         return 0;
       });
 
@@ -365,21 +381,14 @@ class FirestoreService {
         final data = doc.data();
         int current = data['currentPlayersCount'] ?? 0;
         int limit = data['playerCount'] ?? 15;
-
-        if (current < limit) {
-          return doc.id;
-        }
+        if (current < limit) return doc.id;
       }
     } catch (e) {
       debugPrint('Error finding public room: $e');
       rethrow;
     }
+    return null;
   }
-
-  /// ============================================================
-  /// KỸ NĂNG: Transaction cập nhật đúng 1 thuộc tính của 1 người chơi
-  /// Tránh ghi đè toàn bộ mảng players (Race Condition).
-  /// ============================================================
 
   /// Cập nhật 1 hoặc nhiều thuộc tính của người chơi bằng Transaction
   Future<void> updatePlayerField(String roomCode, int targetPlayerId, Map<String, dynamic> fields) async {

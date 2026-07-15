@@ -178,6 +178,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   int _lastProcessedPhaseNumber = -1;
 
+  String? winnerMessage;
+  String? _activeMatchmakingToken;
+
   void listenToRoom(String code) {
     _roomSubscription?.cancel();
     _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
@@ -188,6 +191,24 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
       final data = snapshot.data();
       if (data != null) {
+        // XỬ LÝ KẾT THÚC GAME TỪ SERVER
+        if (data['status'] == 'ended' && currentState != PlayState.ended) {
+          currentState = PlayState.ended;
+          String winner = data['winner'] ?? '';
+          if (winner == 'nerd') {
+            winnerMessage = '${langSvc.t('role_nerd')} thắng!';
+          } else if (winner == 'werewolves') {
+            winnerMessage = 'Ma Sói thắng!';
+          } else if (winner == 'villagers') {
+            winnerMessage = 'Dân Làng thắng!';
+          } else if (winner == 'lovers') {
+            winnerMessage = 'Phe Tình Nhân thắng! ❤️';
+          }
+          _phaseTimer?.cancel();
+          notifyListeners();
+          return;
+        }
+
         final List playersData = data['players'] ?? [];
         final List messagesData = data['messages'] ?? [];
         final int serverPhaseNumber = data['phaseNumber'] ?? 0;
@@ -239,6 +260,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
               if (pData != null) {
                 players[i].isAlive = pData['isAlive'] ?? true;
                 players[i].voteCount = pData['voteCount'] ?? 0;
+                players[i].votedForId = pData['votedForId']; // Đồng bộ mục tiêu đang vote
                 players[i].isHost = pData['isHost'] ?? false;
                 players[i].isProtected = pData['isProtected'] ?? false;
                 players[i].isPoisoned = pData['isPoisoned'] ?? false;
@@ -247,6 +269,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
                 if (players[i].name == userName) {
                   myPlayer = players[i];
+                  // ĐỒNG BỘ LẠI BIẾN LOCAL VOTE: Để tránh kẹt phiếu sau khi treo cổ
+                  if (currentPhase == GamePhase.night) {
+                    _myNightBiteTargetId = players[i].votedForId;
+                  } else {
+                    _myCurrentVoteTargetId = players[i].votedForId;
+                  }
+                }
+                
+                // Đồng bộ flag isTargeted cho UI vẽ viền
+                if (myPlayer != null) {
+                  players[i].isTargeted = (players[i].id == myPlayer!.votedForId);
                 }
               }
             }
@@ -620,23 +653,23 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> startOnlineMatchmaking() async {
     if (roomCode.isNotEmpty && currentState == PlayState.lobby) return;
 
+    final String sessionToken = DateTime.now().millisecondsSinceEpoch.toString();
+    _activeMatchmakingToken = sessionToken;
+
     await _ensureNameLoaded();
+    if (_activeMatchmakingToken != sessionToken) return;
+
     currentState = PlayState.matchmaking;
     notifyListeners();
 
     try {
-      // THUẬT TOÁN GHÉP TRẬN TỐI ƯU:
-      // Vòng 1: Tìm ngay lập tức (không delay) để vào phòng có sẵn nhanh nhất.
-      // Các vòng sau: Delay 1s mỗi vòng. Tổng cộng 8 vòng (~8 giây) trước khi tạo phòng mới.
       for (int attempt = 0; attempt < 8; attempt++) {
-        // Chỉ delay từ vòng 2 trở đi. Vòng đầu tìm ngay.
         if (attempt > 0) {
-          // Delay ngẫu nhiên 800-1200ms để tránh race condition khi nhiều client cùng tạo phòng
           int jitter = 800 + Random().nextInt(400);
           await Future.delayed(Duration(milliseconds: jitter));
         }
 
-        if (currentState != PlayState.matchmaking) return;
+        if (_activeMatchmakingToken != sessionToken || currentState != PlayState.matchmaking) return;
 
         debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1}/8)...');
         String? foundRoomCode;
@@ -646,29 +679,35 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           debugPrint('Matchmaking error during query: $e');
         }
 
-        if (foundRoomCode != null) {
+        if (foundRoomCode != null && _activeMatchmakingToken == sessionToken) {
           try {
+            _roomSubscription?.cancel();
             await joinExistingRoom(foundRoomCode, userName);
-            debugPrint('Matchmaking SUCCESS: Joined room $foundRoomCode');
-            return;
+            if (_activeMatchmakingToken == sessionToken) {
+              _activeMatchmakingToken = null;
+              return;
+            } else {
+              leaveRoom();
+              return;
+            }
           } catch (e) {
             debugPrint('Matchmaking: Room $foundRoomCode just became full/invalid, searching next...');
           }
         }
       }
 
-      // Nếu sau ~8 giây không tìm thấy phòng phù hợp, mới tiến hành tạo phòng mới
-      if (currentState == PlayState.matchmaking) {
+      if (_activeMatchmakingToken == sessionToken && currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
         playerCount = 15;
         isRoomLocked = false;
         await createRoom();
+        _activeMatchmakingToken = null;
       }
     } catch (e) {
-      debugPrint('Matchmaking error: $e');
-      if (currentState == PlayState.matchmaking) {
+      if (_activeMatchmakingToken == sessionToken) {
         currentState = PlayState.setup;
+        _activeMatchmakingToken = null;
         notifyListeners();
       }
     }
@@ -797,7 +836,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Color getPlayerBorderColor(OnlinePlayer player) {
-    if (selectedPlayer?.id == player.id) return const Color(0xFFFFD54F);
+    if (selectedPlayer?.id == player.id || player.isTargeted) return const Color(0xFFFFD54F);
     if (!player.isAlive) return Colors.grey[700]!;
     if (player.id == myPlayer?.id) return player.role.primaryColor;
     if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350);
@@ -1333,7 +1372,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _updateActivity();
-    checkGameOver();
+    final gameOver = checkGameOver();
+    
+    // NẾU HẾT GIỜ TRONG LÚC THỢ SĂN ĐANG CHỌN -> CHUYỂN GIAI ĐOẠN NGAY SAU KHI BẮN
+    if (gameOver.isEmpty && phaseTimerSeconds <= 0) {
+      if (roomCode.isNotEmpty) {
+        _triggerNextPhaseOnFirestore();
+      } else {
+        _triggerNextPhaseOffline();
+      }
+    }
+    
     notifyListeners();
   }
 
@@ -1367,23 +1416,25 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String checkGameOver() {
+    if (winnerMessage != null) return winnerMessage!;
     if (currentState != PlayState.playing || players.isEmpty) return '';
 
     // 1. Kiểm tra Kẻ Ngốc (Nerd) bị treo cổ
     if (isNerdHanged) {
+      winnerMessage = '${langSvc.t('role_nerd')} thắng!';
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
-      return '${langSvc.t('role_nerd')} thắng!';
+      return winnerMessage!;
     }
 
     // 2. Kiểm tra Phe Tình Nhân chiến thắng tuyệt đối
     if (lover1 != null && lover2 != null && lover1!.isAlive && lover2!.isAlive) {
       int aliveCount = players.where((p) => p.isAlive).length;
-      // Thắng khi chỉ còn 2 người tình, hoặc 2 người tình + Cupid
       if (aliveCount == 2 || (aliveCount == 3 && players.any((p) => p.isAlive && p.role.id == 'cupid'))) {
+        winnerMessage = 'Phe Tình Nhân đã giành chiến thắng! ❤️';
         currentState = PlayState.ended;
         _phaseTimer?.cancel();
-        return 'Phe Tình Nhân đã giành chiến thắng! ❤️';
+        return winnerMessage!;
       }
     }
 
@@ -1392,16 +1443,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // 3. Phe Dân Làng thắng
     if (w == 0) {
+      winnerMessage = 'Dân Làng thắng!';
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
-      return 'Dân Làng thắng!';
+      return winnerMessage!;
     }
 
     // 4. Phe Ma Sói thắng
     if (w >= g) {
+      winnerMessage = 'Ma Sói thắng!';
       currentState = PlayState.ended;
       _phaseTimer?.cancel();
-      return 'Ma Sói thắng!';
+      return winnerMessage!;
     }
 
     return '';
