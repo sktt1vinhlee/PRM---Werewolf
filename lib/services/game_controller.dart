@@ -1275,16 +1275,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       target.isProtected = true;
       target.wasHealedByWitch = true;
     } else {
+      target.isAlive = true; // Hồi sinh ngay lập tức để UI phản hồi
       witchReviveTargetId = target.id;
       target.wasHealedByWitch = true;
     }
     hasHealPotion = false;
     hasUsedHealThisNight = true;
     if (roomCode.isNotEmpty) {
-      // Cập nhật trạng thái bảo vệ lên server ngay lập tức
+      // Cập nhật trạng thái bảo vệ và sống sót lên server ngay lập tức
       firestoreSvc.updatePlayerField(roomCode, target.id, {
-        'isProtected': true,
+        'isProtected': target.isProtected,
         'wasHealedByWitch': true,
+        'isAlive': true,
       });
       // Đồng thời đặt witchReviveTargetId làm fallback cho Transaction chuyển phase
       firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
@@ -1433,7 +1435,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       for (var p in players) {
         if (p.wasHealedByWitch) {
           p.wasHealedByWitch = false;
-          updates[p.id] = {'wasHealedByWitch': false};
+          p.isProtected = false;
+          // Nếu người này vừa được hồi sinh, trả họ về trạng thái chết
+          if (p.id == witchReviveTargetId) {
+            p.isAlive = false;
+            updates[p.id] = {'wasHealedByWitch': false, 'isProtected': false, 'isAlive': false};
+          } else {
+            updates[p.id] = {'wasHealedByWitch': false, 'isProtected': false};
+          }
         }
       }
       hasHealPotion = true;
@@ -1444,6 +1453,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         syncGameState();
       }
+      witchReviveTargetId = null;
     } else if (hasUsedPoisonThisNight) {
       for (var p in players) {
         if (p.isPoisoned) {

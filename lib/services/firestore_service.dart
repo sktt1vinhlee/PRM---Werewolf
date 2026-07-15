@@ -208,6 +208,9 @@ class FirestoreService {
           int? reviveId = data['witchReviveTargetId'];
 
           for (var p in players) {
+            if (p['id'] == reviveId && reviveId != null) {
+              p['isAlive'] = true; // Đảm bảo trạng thái sống được duy trì
+            }
             if (p['id'] == victimId && victimId != null) {
               if (p['isProtected'] != true && p['id'] != reviveId) {
                 p['isAlive'] = false;
