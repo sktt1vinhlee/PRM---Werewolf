@@ -134,7 +134,7 @@ class LanguageService extends ChangeNotifier {
       'instruction_vote': 'Chạm người chơi để vote.',
       'instruction_target': 'Mục tiêu:',
       'role_dan': 'Dân Làng',
-      'role_dan_dz`esc': 'Tìm và bỏ phiếu treo cổ Ma Sói vào ban ngày.',
+      'role_dan_desc': 'Tìm và bỏ phiếu treo cổ Ma Sói vào ban ngày.',
       'role_soi': 'Ma Sói',
       'role_soi_desc': 'Cùng bầy đàn tiêu diệt dân làng vào ban đêm.',
       'role_soi_nguyen': 'Sói Nguyền',
