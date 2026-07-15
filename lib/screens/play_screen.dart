@@ -904,6 +904,9 @@ class _PlayScreenState extends State<PlayScreen> {
         if (!player.isAlive) ...[
           Positioned.fill(child: Container(decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(16)), child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.close, color: Color(0xFFEF5350)), Text(langSvc.t('died_label'), style: const TextStyle(color: Color(0xFFEF5350), fontSize: 10, fontWeight: FontWeight.bold))]))))
         ],
+        if (player.isDisconnected && player.isAlive) ...[
+          Positioned.fill(child: Container(decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(16)), child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.wifi_off, color: Colors.orange), Text(langSvc.currentLanguage == AppLanguage.vi ? 'MẤT KẾT NỐI' : 'DISCONNECTED', style: const TextStyle(color: Colors.orange, fontSize: 8, fontWeight: FontWeight.bold))]))))
+        ],
 
         _buildSkillIndicators(player),
 
@@ -994,7 +997,6 @@ class _PlayScreenState extends State<PlayScreen> {
 
   Widget _buildChatLogTabs() {
     final my = _controller.myPlayer;
-    final isWolf = my?.role.team == RoleTeam.werewolf;
     final isLobby = _controller.currentState == PlayState.lobby;
     final isNight = _controller.currentPhase == GamePhase.night;
     final isDark = isLobby || isNight;

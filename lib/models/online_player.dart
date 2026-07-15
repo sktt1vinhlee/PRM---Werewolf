@@ -5,6 +5,7 @@ class OnlinePlayer {
   final String name;
   final RoleDefinition role;
   bool isAlive;
+  bool isDisconnected;
   int voteCount;
   bool isTargeted;
   bool hasBeenScannedBySeer;
@@ -20,6 +21,7 @@ class OnlinePlayer {
     required this.name,
     required this.role,
     this.isAlive = true,
+    this.isDisconnected = false,
     this.voteCount = 0,
     this.isTargeted = false,
     this.hasBeenScannedBySeer = false,
@@ -35,6 +37,7 @@ class OnlinePlayer {
     return {
       'id': id,
       'isAlive': isAlive,
+      'isDisconnected': isDisconnected,
       'voteCount': voteCount,
       'isTargeted': isTargeted,
       'isProtected': isProtected,

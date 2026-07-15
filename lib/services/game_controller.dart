@@ -316,6 +316,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 }
 
                 players[i].isAlive = isAliveOnServer;
+                players[i].isDisconnected = pData['isDisconnected'] ?? false;
                 players[i].voteCount = pData['voteCount'] ?? 0;
                 players[i].votedForId = pData['votedForId']; // Đồng bộ mục tiêu đang vote
                 players[i].isHost = pData['isHost'] ?? false;
@@ -340,8 +341,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 }
               } else {
                 // Người chơi đã thoát khỏi phòng (không có trong playersData trên server)
-                if (players[i].isAlive) {
-                  players[i].isAlive = false;
+                if (!players[i].isDisconnected) {
+                  players[i].isDisconnected = true;
                   addLog('${players[i].name} đã rời khỏi trận đấu.');
                 }
               }
@@ -630,20 +631,20 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (roomCode.isNotEmpty && userName.isNotEmpty) {
-        firestoreSvc.updateLastSeen(roomCode, userName);
-      }
+      _updateActivity();
     });
     // Gửi ngay lần đầu
-    if (roomCode.isNotEmpty && userName.isNotEmpty) {
-      firestoreSvc.updateLastSeen(roomCode, userName);
-    }
+    _updateActivity();
   }
 
   /// Cập nhật thời gian hoạt động cuối cùng của người chơi
   void _updateActivity() {
     if (roomCode.isNotEmpty && userName.isNotEmpty) {
       firestoreSvc.updateLastSeen(roomCode, userName);
+      // Tự động khôi phục trạng thái kết nối nếu đang bị đánh dấu mất kết nối
+      if (myPlayer != null && myPlayer!.isDisconnected) {
+        firestoreSvc.updatePlayerField(roomCode, myPlayer!.id, {'isDisconnected': false});
+      }
     }
   }
 
@@ -666,13 +667,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
               // Kick người chơi khỏi phòng nếu đang ở sảnh
               firestoreSvc.leaveRoom(roomCode, pName);
             } else if (currentState == PlayState.playing) {
-              // Giết người chơi nếu đang trong trận
+              // Đánh dấu người chơi mất kết nối thay vì giết họ
               final player = players.firstWhere((p) => p.name == pName, orElse: () => OnlinePlayer(id: -1, name: '', role: roleDefinitions[0]));
-              if (player.id != -1 && player.isAlive) {
-                firestoreSvc.updatePlayerField(roomCode, player.id, {'isAlive': false});
+              if (player.id != -1 && !player.isDisconnected) {
+                firestoreSvc.updatePlayerField(roomCode, player.id, {'isDisconnected': true});
                 firestoreSvc.sendChatMessage(roomCode, {
                   'senderName': 'system',
-                  'content': '$pName đã mất kết nối và tử vong.',
+                  'content': '$pName đã mất kết nối.',
                   'isSystem': true,
                   'time': Timestamp.now()
                 });
