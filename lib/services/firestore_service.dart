@@ -192,6 +192,13 @@ class FirestoreService {
         List players = List.from(data['players'] ?? []);
         List messages = [];
         String currentPhase = data['currentPhase'] ?? 'night';
+        Map<String, dynamic> updates = {
+          'currentPhase': nextPhase,
+          'phaseNumber': currentPN + 1,
+          'phaseEndTime': Timestamp.fromDate(DateTime.now().add(Duration(seconds: durationSeconds))),
+          'werewolfTargetId': null,
+          'witchReviveTargetId': null,
+        };
 
         if (currentPhase == 'night') {
           // TÍNH TOÁN NẠN NHÂN DỰA TRÊN PHIẾU BẦU CỦA SÓI
@@ -260,7 +267,8 @@ class FirestoreService {
             hangedPlayer['isAlive'] = false;
             messages.add({'senderName': 'system', 'content': 'lynched', 'targetName': hangedPlayer['name'], 'isSystem': true, 'time': Timestamp.now()});
             if (hangedPlayer['roleId'] == 'nerd') {
-              transaction.update(roomRef, {'status': 'ended', 'winner': 'nerd'});
+              updates['status'] = 'ended';
+              updates['winner'] = 'nerd';
             }
           } else {
             messages.add({'senderName': 'system', 'content': 'no_lynch', 'isSystem': true, 'time': Timestamp.now()});
@@ -279,14 +287,7 @@ class FirestoreService {
           messages.add({'senderName': 'system', 'content': 'night_start', 'isSystem': true, 'time': Timestamp.now()});
         }
 
-        Map<String, dynamic> updates = {
-          'currentPhase': nextPhase,
-          'phaseNumber': currentPN + 1,
-          'phaseEndTime': Timestamp.fromDate(DateTime.now().add(Duration(seconds: durationSeconds))),
-          'players': players,
-          'werewolfTargetId': null,
-          'witchReviveTargetId': null,
-        };
+        updates['players'] = players;
 
         // --- KIỂM TRA TỬ NẠN CÙNG NHAU (LOVER LINK) ---
         final int? l1Id = data['lover1Id'];
@@ -325,6 +326,9 @@ class FirestoreService {
         }
 
         // --- KIỂM TRA THẮNG CUỘC TRÊN SERVER ---
+        // Nếu Nerd đã thắng (status ended), không kiểm tra các điều kiện thắng khác
+        if (updates['status'] == 'ended') return;
+
         int wolves = players.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
         int others = players.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
 

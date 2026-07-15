@@ -35,6 +35,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   List<ChatMessage> chatMessages = [];
 
   int phaseTimerSeconds = 0;
+  bool _isTransitioning = false; // Khóa để tránh spam transaction khi hết giờ
   Timer? _phaseTimer;
   Timer? botChatTimer;
   Timer? _heartbeatTimer;       // Heartbeat: cập nhật lastSeen định kỳ
@@ -199,22 +200,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
       final data = snapshot.data();
       if (data != null) {
-        // XỬ LÝ KẾT THÚC GAME TỪ SERVER
+        String? winnerFromServer;
+        // KIỂM TRA TRẠNG THÁI KẾT THÚC GAME TỪ SERVER (Chỉ lưu lại, xử lý sau khi sync data)
         if (data['status'] == 'ended' && currentState != PlayState.ended) {
-          currentState = PlayState.ended;
-          String winner = data['winner'] ?? '';
-          if (winner == 'nerd') {
-            winnerMessage = '${langSvc.t('role_nerd')} thắng!';
-          } else if (winner == 'werewolves') {
-            winnerMessage = 'Ma Sói thắng!';
-          } else if (winner == 'villagers') {
-            winnerMessage = 'Dân Làng thắng!';
-          } else if (winner == 'lovers') {
-            winnerMessage = 'Phe Tình Nhân thắng! ❤️';
-          }
-          _phaseTimer?.cancel();
-          notifyListeners();
-          return;
+          winnerFromServer = data['winner'] ?? '';
         }
 
         final List playersData = data['players'] ?? [];
@@ -316,7 +305,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 }
 
                 players[i].isAlive = isAliveOnServer;
-                players[i].isDisconnected = pData['isDisconnected'] ?? false;
                 players[i].voteCount = pData['voteCount'] ?? 0;
                 players[i].votedForId = pData['votedForId']; // Đồng bộ mục tiêu đang vote
                 players[i].isHost = pData['isHost'] ?? false;
@@ -341,10 +329,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 }
               } else {
                 // Người chơi đã thoát khỏi phòng (không có trong playersData trên server)
-                if (!players[i].isDisconnected) {
-                  players[i].isDisconnected = true;
-                  addLog('${players[i].name} đã rời khỏi trận đấu.');
-                }
+                // KHÔNG LÀM GÌ CẢ: Giữ họ trong danh sách và còn sống như yêu cầu
               }
             }
           }
@@ -392,6 +377,24 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         if (data['status'] == 'playing' && currentState == PlayState.lobby) {
           _handleGameStarted(playersData);
         }
+
+        // XỬ LÝ KẾT THÚC GAME SAU KHI ĐÃ ĐỒNG BỘ DỮ LIỆU
+        if (winnerFromServer != null) {
+          currentState = PlayState.ended;
+          if (winnerFromServer == 'nerd') {
+            winnerMessage = '${langSvc.t('role_nerd')} thắng!';
+          } else if (winnerFromServer == 'werewolves') {
+            winnerMessage = 'Ma Sói thắng!';
+          } else if (winnerFromServer == 'villagers') {
+            winnerMessage = 'Dân Làng thắng!';
+          } else if (winnerFromServer == 'lovers') {
+            winnerMessage = 'Phe Tình Nhân thắng! ❤️';
+          }
+          _phaseTimer?.cancel();
+          notifyListeners();
+          return;
+        }
+
         notifyListeners();
       }
     });
@@ -460,7 +463,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         // Khi hết giờ: Chế độ Online gọi Server liên tục cho đến khi phase đổi, Offline xử lý locally
         if (roomCode.isNotEmpty) {
-          _triggerNextPhaseOnFirestore();
+          if (!_isTransitioning) {
+            _isTransitioning = true;
+            _triggerNextPhaseOnFirestore();
+          }
         } else {
           timer.cancel();
           _triggerNextPhaseOffline();
@@ -502,6 +508,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   // --- 2. XỬ LÝ CHUYỂN GIAI ĐOẠN ---
   void _handlePhaseTransitionFromServer(GamePhase newPhase) {
+    // Reset khóa chuyển phase khi đã nhận được phase mới từ server
+    _isTransitioning = false;
+
     // Trong chế độ Online, chúng ta không tự tính toán kết quả locally
     // vì Server (Firestore Transaction) đã làm điều đó và cập nhật vào danh sách players.
 
@@ -641,10 +650,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void _updateActivity() {
     if (roomCode.isNotEmpty && userName.isNotEmpty) {
       firestoreSvc.updateLastSeen(roomCode, userName);
-      // Tự động khôi phục trạng thái kết nối nếu đang bị đánh dấu mất kết nối
-      if (myPlayer != null && myPlayer!.isDisconnected) {
-        firestoreSvc.updatePlayerField(roomCode, myPlayer!.id, {'isDisconnected': false});
-      }
     }
   }
 
@@ -666,18 +671,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             if (currentState == PlayState.lobby) {
               // Kick người chơi khỏi phòng nếu đang ở sảnh
               firestoreSvc.leaveRoom(roomCode, pName);
-            } else if (currentState == PlayState.playing) {
-              // Đánh dấu người chơi mất kết nối thay vì giết họ
-              final player = players.firstWhere((p) => p.name == pName, orElse: () => OnlinePlayer(id: -1, name: '', role: roleDefinitions[0]));
-              if (player.id != -1 && !player.isDisconnected) {
-                firestoreSvc.updatePlayerField(roomCode, player.id, {'isDisconnected': true});
-                firestoreSvc.sendChatMessage(roomCode, {
-                  'senderName': 'system',
-                  'content': '$pName đã mất kết nối.',
-                  'isSystem': true,
-                  'time': Timestamp.now()
-                });
-              }
             }
           }
         }
@@ -812,7 +805,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (_activeMatchmakingToken == sessionToken && currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
-        playerCount = 15;
+        // Cho phép tối đa 18 người thay vì cứng 15
+        playerCount = 18;
         isRoomLocked = false;
         await createRoom();
         _activeMatchmakingToken = null;
