@@ -1281,13 +1281,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     hasHealPotion = false;
     hasUsedHealThisNight = true;
     if (roomCode.isNotEmpty) {
+      // Cập nhật trạng thái bảo vệ lên server ngay lập tức
       firestoreSvc.updatePlayerField(roomCode, target.id, {
-        'isProtected': target.isAlive ? true : false,
+        'isProtected': true,
         'wasHealedByWitch': true,
       });
-      if (!target.isAlive) {
-        firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
-      }
+      // Đồng thời đặt witchReviveTargetId làm fallback cho Transaction chuyển phase
+      firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
     } else {
       syncGameState();
     }

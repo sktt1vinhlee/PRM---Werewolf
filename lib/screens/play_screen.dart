@@ -323,8 +323,10 @@ class _PlayScreenState extends State<PlayScreen> {
         if (!isSearchingRoom) ...[
           _buildRoomCodeCard(),
           const SizedBox(height: 16),
-          _buildLobbyPlayerCountCard(),
-          const SizedBox(height: 16),
+          if (!widget.isQuickMatch) ...[
+            _buildLobbyPlayerCountCard(),
+            const SizedBox(height: 16),
+          ],
         ],
         _buildConnectedPlayersSimulator(), const SizedBox(height: 16),
         _buildChatLogTabs(),
@@ -608,54 +610,48 @@ class _PlayScreenState extends State<PlayScreen> {
         _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim()) ||
         (_controller.myPlayer?.isHost == true);
 
-    return Container(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Row(
-          children: [
-            // Nút Rời phòng bổ sung ở dưới cho Member dễ thấy
-            SizedBox(
+    if (isHost) {
+      return Container(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: _lobbyPrimaryButton(
+              langSvc.t('start_game'),
+              onPressed: () {
+                if (_controller.lobbyPlayerNames.length < 4) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(langSvc.currentLanguage == AppLanguage.vi
+                          ? 'Cần tối thiểu 4 người chơi để bắt đầu!'
+                          : 'Need at least 4 players to start!'),
+                      backgroundColor: const Color(0xFFC62828),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                  return;
+                }
+                _controller.startGame();
+              }
+          )
+      );
+    } else {
+      // Member view: Thay vì nút bấm, hiện thanh trạng thái chờ
+      return Container(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Container(
+              width: double.infinity,
               height: 56,
-              width: 56,
-              child: OutlinedButton(
-                onPressed: () async {
-                  final nav = Navigator.of(context);
-                  if (await _onWillPop() && mounted) {
-                    nav.popUntil((route) => route.isFirst);
-                  }
-                },
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.white30),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  padding: EdgeInsets.zero,
-                  backgroundColor: Colors.white.withValues(alpha: 0.05),
-                ),
-                child: const Icon(Icons.logout, color: Colors.white70, size: 24),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24)
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _lobbyPrimaryButton(
-                  isHost ? langSvc.t('start_game') : langSvc.t('waiting_host'),
-                  onPressed: isHost ? () {
-                    if (_controller.lobbyPlayerNames.length < 4) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(langSvc.currentLanguage == AppLanguage.vi
-                              ? 'Cần tối thiểu 4 người chơi để bắt đầu!'
-                              : 'Need at least 4 players to start!'),
-                          backgroundColor: const Color(0xFFC62828),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                      return;
-                    }
-                    _controller.startGame();
-                  } : null
-              ),
-            ),
-          ],
-        )
-    );
+              child: Text(
+                  langSvc.currentLanguage == AppLanguage.vi ? 'CHỜ CHỦ PHÒNG BẮT ĐẦU...' : 'WAITING FOR HOST TO START...',
+                  style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, letterSpacing: 1.1)
+              )
+          )
+      );
+    }
   }
 
   Widget _buildRoleRevealView() {

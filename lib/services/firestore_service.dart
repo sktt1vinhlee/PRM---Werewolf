@@ -276,6 +276,29 @@ class FirestoreService {
           'witchReviveTargetId': null,
         };
 
+        // --- KIỂM TRA TỬ NẠN CÙNG NHAU (LOVER LINK) ---
+        final int? l1Id = data['lover1Id'];
+        final int? l2Id = data['lover2Id'];
+        if (l1Id != null && l2Id != null) {
+          bool l1Dead = players.any((p) => p['id'] == l1Id && p['isAlive'] == false);
+          bool l2Dead = players.any((p) => p['id'] == l2Id && p['isAlive'] == false);
+
+          if (l1Dead || l2Dead) {
+            for (var p in players) {
+              if ((p['id'] == l1Id || p['id'] == l2Id) && p['isAlive'] == true) {
+                p['isAlive'] = false;
+                messages.add({
+                  'senderName': 'system',
+                  'content': 'lover_tragedy',
+                  'targetName': p['name'],
+                  'isSystem': true,
+                  'time': Timestamp.now()
+                });
+              }
+            }
+          }
+        }
+
         if (nextPhase == 'night') {
           updates['dayNumber'] = (data['dayNumber'] ?? 1) + 1;
         }
