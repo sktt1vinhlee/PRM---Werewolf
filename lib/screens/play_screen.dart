@@ -24,7 +24,7 @@ class _PlayScreenState extends State<PlayScreen> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _logScrollController = ScrollController();
-  int _selectedChatTab = 0; // 0: Làng, 1: Sói, 2: Nhật ký
+  int _selectedChatTab = 0; // 0: Trò chuyện, 1: Nhật ký
   bool _isGameOverDialogShowing = false;
   bool _shouldAutoScrollChat = true;
   bool _shouldAutoScrollLog = true;
@@ -67,13 +67,13 @@ class _PlayScreenState extends State<PlayScreen> {
 
   void _autoScrollIfNeeded() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_selectedChatTab != 2 && _shouldAutoScrollChat && _chatScrollController.hasClients) {
+      if (_selectedChatTab == 0 && _shouldAutoScrollChat && _chatScrollController.hasClients) {
         _chatScrollController.animateTo(
           _chatScrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
-      } else if (_selectedChatTab == 2 && _shouldAutoScrollLog && _logScrollController.hasClients) {
+      } else if (_selectedChatTab == 1 && _shouldAutoScrollLog && _logScrollController.hasClients) {
         _logScrollController.animateTo(
           _logScrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 200),
@@ -317,9 +317,13 @@ class _PlayScreenState extends State<PlayScreen> {
     final isSearchingRoom = widget.isOnlineQuickMatch && _controller.roomCode.isEmpty;
     return Column(children: [
       _buildTopBar(isSearchingRoom ? (langSvc.currentLanguage == AppLanguage.vi ? 'ĐANG GHÉP TRẬN' : 'MATCHMAKING') : langSvc.t('lobby_title'), showInfo: true),
-      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 40), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildUserProfileCard(),
+        const SizedBox(height: 16),
         if (!isSearchingRoom) ...[
           _buildRoomCodeCard(),
+          const SizedBox(height: 16),
+          _buildLobbyPlayerCountCard(),
           const SizedBox(height: 16),
         ],
         _buildConnectedPlayersSimulator(), const SizedBox(height: 16),
@@ -450,6 +454,10 @@ class _PlayScreenState extends State<PlayScreen> {
   }
 
   Widget _buildLobbyPlayerCountCard() {
+    final isHost = (_controller.lobbyPlayerNames.isNotEmpty &&
+        _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim()) ||
+        (_controller.myPlayer?.isHost == true);
+
     return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white30)),
@@ -470,12 +478,12 @@ class _PlayScreenState extends State<PlayScreen> {
           ),
           Slider(
               value: _controller.playerCount.toDouble(),
-              min: 9,
+              min: 4, // Thay đổi min thành 4
               max: 18,
-              divisions: 9,
+              divisions: 14, // 18 - 4 = 14
               activeColor: Colors.white,
               inactiveColor: Colors.white30,
-              onChanged: (v) => _controller.updatePlayerCount(v.toInt())
+              onChanged: isHost ? (v) => _controller.updatePlayerCount(v.toInt()) : null
           ),
         ])
     );
@@ -533,7 +541,7 @@ class _PlayScreenState extends State<PlayScreen> {
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: Colors.white54, width: 0.5)
                         ),
-                        child: Text(i == 0 ? langSvc.t('host') : langSvc.t('ready'), style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))
+                        child: Text(i == 0 ? langSvc.t('host') : langSvc.t('ready'), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold))
                     ),
                   ]
               )
@@ -571,7 +579,7 @@ class _PlayScreenState extends State<PlayScreen> {
     final isSearchingRoom = widget.isOnlineQuickMatch && _controller.roomCode.isEmpty;
     if (isSearchingRoom) {
       return Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Container(
               width: double.infinity,
               height: 56,
@@ -596,28 +604,56 @@ class _PlayScreenState extends State<PlayScreen> {
       );
     }
 
-    final isHost = _controller.lobbyPlayerNames.isNotEmpty &&
-        _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim();
+    final isHost = (_controller.lobbyPlayerNames.isNotEmpty &&
+        _controller.lobbyPlayerNames[0].trim() == _controller.userName.trim()) ||
+        (_controller.myPlayer?.isHost == true);
 
     return Container(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: _lobbyPrimaryButton(
-            isHost ? langSvc.t('start_game') : langSvc.t('waiting_host'),
-            onPressed: isHost ? () {
-              if (_controller.lobbyPlayerNames.length < 4) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(langSvc.currentLanguage == AppLanguage.vi
-                        ? 'Cần tối thiểu 4 người chơi để bắt đầu!'
-                        : 'Need at least 4 players to start!'),
-                    backgroundColor: const Color(0xFFC62828),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-                return;
-              }
-              _controller.startGame();
-            } : null
+        child: Row(
+          children: [
+            // Nút Rời phòng bổ sung ở dưới cho Member dễ thấy
+            SizedBox(
+              height: 56,
+              width: 56,
+              child: OutlinedButton(
+                onPressed: () async {
+                  final nav = Navigator.of(context);
+                  if (await _onWillPop() && mounted) {
+                    nav.popUntil((route) => route.isFirst);
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.white30),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: EdgeInsets.zero,
+                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                ),
+                child: const Icon(Icons.logout, color: Colors.white70, size: 24),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _lobbyPrimaryButton(
+                  isHost ? langSvc.t('start_game') : langSvc.t('waiting_host'),
+                  onPressed: isHost ? () {
+                    if (_controller.lobbyPlayerNames.length < 4) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(langSvc.currentLanguage == AppLanguage.vi
+                              ? 'Cần tối thiểu 4 người chơi để bắt đầu!'
+                              : 'Need at least 4 players to start!'),
+                          backgroundColor: const Color(0xFFC62828),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      return;
+                    }
+                    _controller.startGame();
+                  } : null
+              ),
+            ),
+          ],
         )
     );
   }
@@ -923,6 +959,18 @@ class _PlayScreenState extends State<PlayScreen> {
       icons.add(_miniIcon(Icons.auto_awesome, Colors.purpleAccent));
     }
 
+    // Hiển thị ai đang vote (Dành cho Phe Sói vào ban đêm)
+    if (_controller.currentPhase == GamePhase.night && my.role.team == RoleTeam.werewolf) {
+      final voters = _controller.players.where((p) => p.isAlive && p.role.team == RoleTeam.werewolf && p.votedForId == player.id);
+      for (var voter in voters) {
+        icons.add(Container(
+          padding: const EdgeInsets.all(1),
+          decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 0.5)),
+          child: Text('${voter.id}', style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+        ));
+      }
+    }
+
     if (icons.isEmpty && player.voteCount == 0) {
       return const SizedBox.shrink();
     }
@@ -970,16 +1018,14 @@ class _PlayScreenState extends State<PlayScreen> {
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Row(children: [
-            _buildTabButton(langSvc.currentLanguage == AppLanguage.vi ? 'Làng' : 'Village', isActive: _selectedChatTab == 0, onTap: () => setState(() => _selectedChatTab = 0)),
-            if (isWolf && !isLobby)
-              _buildTabButton(langSvc.currentLanguage == AppLanguage.vi ? 'Sói' : 'Wolves', isActive: _selectedChatTab == 1, onTap: () => setState(() => _selectedChatTab = 1)),
-            _buildTabButton(langSvc.t('log_tab'), isActive: _selectedChatTab == 2, onTap: () => setState(() => _selectedChatTab = 2))
+            _buildTabButton(langSvc.t('chat_tab'), isActive: _selectedChatTab == 0, onTap: () => setState(() => _selectedChatTab = 0)),
+            _buildTabButton(langSvc.t('log_tab'), isActive: _selectedChatTab == 1, onTap: () => setState(() => _selectedChatTab = 1))
           ]),
           const Divider(color: Color(0xFF334155), height: 1),
           Container(
               height: 120,
               padding: const EdgeInsets.all(8),
-              child: _selectedChatTab != 2 ? NotificationListener<ScrollNotification>(
+              child: _selectedChatTab == 0 ? NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
                   if (notification is ScrollUpdateNotification) {
                     _shouldAutoScrollChat = _chatScrollController.position.pixels >= _chatScrollController.position.maxScrollExtent - 20;
@@ -991,15 +1037,6 @@ class _PlayScreenState extends State<PlayScreen> {
                     itemCount: _controller.chatMessages.length,
                     itemBuilder: (c, i) {
                       final msg = _controller.chatMessages[i];
-
-                      // Lọc tin nhắn dựa trên Tab được chọn
-                      if (_selectedChatTab == 1) {
-                        // Tab Sói: Chỉ hiện tin nhắn Sói
-                        if (!msg.isWerewolfOnly) return const SizedBox.shrink();
-                      } else {
-                        // Tab Làng: Hiện tin nhắn chung, giấu tin nhắn Sói (trừ khi là System)
-                        if (msg.isWerewolfOnly && !msg.isSystem) return const SizedBox.shrink();
-                      }
 
                       if (msg.isGhost && my?.isAlive == true) {
                         return const SizedBox.shrink();
@@ -1021,31 +1058,31 @@ class _PlayScreenState extends State<PlayScreen> {
                 ),
               )
           ),
-          if (_selectedChatTab != 2) Padding(padding: const EdgeInsets.all(6), child: Row(children: [
+          if (_selectedChatTab == 0) Padding(padding: const EdgeInsets.all(6), child: Row(children: [
             Expanded(child: SizedBox(height: 38, child: TextField(
                 controller: _chatController,
-                enabled: !_controller.isChatDisabled() || _selectedChatTab == 1,
+                enabled: !_controller.isChatDisabled(),
                 style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12),
                 decoration: InputDecoration(
-                    hintText: _selectedChatTab == 1 ? (langSvc.currentLanguage == AppLanguage.vi ? 'Chat riêng với Sói...' : 'Chat with wolves...') : _controller.getChatHintText(),
+                    hintText: _controller.getChatHintText(),
                     hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black45),
                     filled: true,
                     fillColor: isLobby ? Colors.white.withValues(alpha: 0.1) : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)
                 ),
                 onSubmitted: (v) {
-                  _controller.sendUserMessage(v, forceWerewolfOnly: _selectedChatTab == 1);
+                  _controller.sendUserMessage(v);
                   _chatController.clear();
                 }
             ))),
             const SizedBox(width: 6),
             CircleAvatar(
                 radius: 18,
-                backgroundColor: (_controller.isChatDisabled() && _selectedChatTab == 0) ? Colors.grey : (isLobby ? Colors.white : const Color(0xFFFFD54F)),
+                backgroundColor: _controller.isChatDisabled() ? Colors.grey : (isLobby ? Colors.white : const Color(0xFFFFD54F)),
                 child: IconButton(
                     icon: Icon(Icons.send, size: 14, color: isLobby ? const Color(0xFF0288D1) : Colors.black),
-                    onPressed: (_controller.isChatDisabled() && _selectedChatTab == 0) ? null : () {
-                      _controller.sendUserMessage(_chatController.text, forceWerewolfOnly: _selectedChatTab == 1);
+                    onPressed: _controller.isChatDisabled() ? null : () {
+                      _controller.sendUserMessage(_chatController.text);
                       _chatController.clear();
                     }
                 )
@@ -1073,10 +1110,10 @@ class _PlayScreenState extends State<PlayScreen> {
     Color clr = msg.isSystem ? (isDark ? const Color(0xFFFFD54F) : const Color(0xFFB45309)) : (msg.isWerewolfOnly ? Colors.red : (msg.isGhost ? Colors.grey : (isMe ? (isDark ? Colors.green : const Color(0xFF15803D)) : (isDark ? Colors.white70 : const Color(0xFF0F172A)))));
     return Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: RichText(text: TextSpan(children: [
       if (msg.isWerewolfOnly) ...[
-        const TextSpan(text: '[SÓI] ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 11))
+        TextSpan(text: '[${langSvc.t('wolf_red')}] ', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 11))
       ],
       if (msg.isGhost) ...[
-        const TextSpan(text: '[MA 👻] ', style: TextStyle(color: Colors.grey, fontSize: 11))
+        TextSpan(text: '[${langSvc.currentLanguage == AppLanguage.vi ? "MA" : "GHOST"} 👻] ', style: const TextStyle(color: Colors.grey, fontSize: 11))
       ],
       TextSpan(text: '$displayName: ', style: TextStyle(color: clr, fontWeight: FontWeight.bold, fontSize: 11.5)),
       TextSpan(text: contentDisplay, style: TextStyle(color: msg.isGhost ? Colors.grey : (isDark ? Colors.white70 : const Color(0xFF334155)), fontSize: 11.5)),

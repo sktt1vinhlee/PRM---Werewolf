@@ -12,7 +12,7 @@ import 'firestore_service.dart';
 
 class GameController extends ChangeNotifier with WidgetsBindingObserver {
   // Cấu hình thời gian cho các giai đoạn (Đồng bộ Web & Android)
-  static const int durationNight = 15;
+  static const int durationNight = 20;
   static const int durationDay = 60;
   static const int durationVoting = 15;
 
@@ -173,6 +173,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // Khi quay lại tab/app, ngay lập tức gửi tín hiệu active
       _updateActivity();
+
+      // Recalculate timer based on server time if available
+      if (_lastSyncedEndTime != null) {
+        final remaining = _lastSyncedEndTime!.toDate().difference(DateTime.now()).inSeconds;
+        phaseTimerSeconds = remaining > 0 ? remaining : 0;
+        _startLocalVisualTimer();
+        notifyListeners();
+      }
     }
   }
 
@@ -218,6 +226,39 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         dayNumber = data['dayNumber'] ?? dayNumber;
         phaseNumber = serverPhaseNumber;
         cursedPlayerId = data['cursedPlayerId'];
+        xathuRevealed = data['xathuRevealed'] ?? false;
+        witchReviveTargetId = data['witchReviveTargetId'];
+
+        // Đồng bộ Phe Tình Nhân từ server
+        final int? l1Id = data['lover1Id'];
+        final int? l2Id = data['lover2Id'];
+        if (l1Id != null && l2Id != null && players.isNotEmpty) {
+          try {
+            lover1 = players.firstWhere((p) => p.id == l1Id);
+            lover2 = players.firstWhere((p) => p.id == l2Id);
+          } catch (_) {
+            lover1 = null;
+            lover2 = null;
+          }
+        } else {
+          // Chỉ reset nếu data thực sự không có lover (tránh mất data khi update dở dang)
+          if (data.containsKey('lover1Id') && data['lover1Id'] == null) {
+            lover1 = null;
+            lover2 = null;
+          }
+        }
+
+        // Đồng bộ mục tiêu Sói cắn từ server
+        final int? wTargetId = data['werewolfTargetId'];
+        if (wTargetId != null && players.isNotEmpty) {
+          try {
+            werewolfTarget = players.firstWhere((p) => p.id == wTargetId);
+          } catch (_) {
+            werewolfTarget = null;
+          }
+        } else {
+          werewolfTarget = null;
+        }
 
         if (data.containsKey('isPublic')) {
           isRoomLocked = !(data['isPublic'] as bool);
@@ -241,6 +282,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             _currentHostName = hostData['name'];
           }
 
+          // Dọn dẹp map lastSeen của những người đã thoát
+          final currentNames = playersData.map((p) => p['name'] as String).toSet();
+          _serverLastSeenMap.removeWhere((key, value) => !currentNames.contains(key));
+          _localLastSeenMap.removeWhere((key, value) => !currentNames.contains(key));
+
           for (var pData in playersData) {
             final String pName = pData['name'];
             final Timestamp? serverLastSeen = pData['lastSeen'];
@@ -258,7 +304,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             for (int i = 0; i < players.length; i++) {
               final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
               if (pData != null) {
-                players[i].isAlive = pData['isAlive'] ?? true;
+                final bool isAliveOnServer = pData['isAlive'] ?? true;
+
+                // Phát hiện cái chết để kích hoạt kỹ năng Thợ Săn (chế độ Online)
+                if (players[i].isAlive && !isAliveOnServer) {
+                  if (players[i].name == userName && players[i].role.id == 'tho_san') {
+                    if (!hunterSkillTriggered) {
+                      _triggerHunterSkill(players[i]);
+                    }
+                  }
+                }
+
+                players[i].isAlive = isAliveOnServer;
                 players[i].voteCount = pData['voteCount'] ?? 0;
                 players[i].votedForId = pData['votedForId']; // Đồng bộ mục tiêu đang vote
                 players[i].isHost = pData['isHost'] ?? false;
@@ -281,19 +338,26 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 if (myPlayer != null) {
                   players[i].isTargeted = (players[i].id == myPlayer!.votedForId);
                 }
+              } else {
+                // Người chơi đã thoát khỏi phòng (không có trong playersData trên server)
+                if (players[i].isAlive) {
+                  players[i].isAlive = false;
+                  addLog('${players[i].name} đã rời khỏi trận đấu.');
+                }
               }
             }
           }
         }
 
-        // CHUYỂN GIAI ĐOẠN: Chỉ xử lý nếu phaseNumber mới lớn hơn cái cũ
+        // ĐỒNG BỘ GIAI ĐOẠN (PHASE): Luôn cập nhật phase từ server để UI đồng bộ
         if (data['currentPhase'] != null) {
-          final newPhase = GamePhase.values.firstWhere((e) => e.name == data['currentPhase'], orElse: () => currentPhase);
-          if (serverPhaseNumber > _lastProcessedPhaseNumber && currentState == PlayState.playing) {
-            _lastProcessedPhaseNumber = serverPhaseNumber;
-            _handlePhaseTransitionFromServer(newPhase);
-          } else {
-            currentPhase = newPhase; // Cập nhật phase hiện tại nhưng không xử lý logic transition
+          currentPhase = GamePhase.values.firstWhere((e) => e.name == data['currentPhase'], orElse: () => currentPhase);
+          
+          if (serverPhaseNumber > _lastProcessedPhaseNumber) {
+            if (currentState == PlayState.playing) {
+              _lastProcessedPhaseNumber = serverPhaseNumber;
+              _handlePhaseTransitionFromServer(currentPhase);
+            }
           }
         }
 
@@ -305,7 +369,24 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           isWerewolfOnly: m['isWerewolfOnly'] ?? false,
           isGhost: m['isGhost'] ?? false,
           time: (m['time'] as Timestamp).toDate(),
-        )).toList();
+        )).where((m) {
+          // Tin nhắn hệ thống: Ai cũng thấy
+          if (m.isSystem) return true;
+
+          // Tin nhắn Phe Sói: Chỉ những người phe Sói mới thấy (kể cả Sói đã chết nếu muốn, hoặc chỉ Sói sống)
+          // Ở đây cho phép cả Sói sống và Sói chết xem kênh Sói, nhưng người phe khác thì không.
+          if (m.isWerewolfOnly) {
+            return myPlayer?.role.team == RoleTeam.werewolf;
+          }
+
+          // Tin nhắn Hồn ma: Chỉ những người đã chết mới thấy
+          if (m.isGhost) {
+            return myPlayer != null && !myPlayer!.isAlive;
+          }
+
+          // Tin nhắn công khai: Ai cũng thấy
+          return true;
+        }).toList();
 
         if (data['status'] == 'playing' && currentState == PlayState.lobby) {
           _handleGameStarted(playersData);
@@ -349,6 +430,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     Future.delayed(const Duration(seconds: 5), () {
       if (currentState != PlayState.roleReveal) return;
       currentState = PlayState.playing;
+      
+      // CATCH-UP: Nếu trong lúc chờ 5s, server đã chuyển phase, xử lý ngay
+      if (phaseNumber > _lastProcessedPhaseNumber) {
+        _lastProcessedPhaseNumber = phaseNumber;
+        _handlePhaseTransitionFromServer(currentPhase);
+      }
+
       dayNumber = 1;
       currentPhase = GamePhase.night;
       hasHealPotion = true;
@@ -369,11 +457,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         phaseTimerSeconds--;
         notifyListeners();
       } else {
-        timer.cancel();
-        // Khi hết giờ: Chế độ Online gọi Server, Offline xử lý locally
+        // Khi hết giờ: Chế độ Online gọi Server liên tục cho đến khi phase đổi, Offline xử lý locally
         if (roomCode.isNotEmpty) {
           _triggerNextPhaseOnFirestore();
         } else {
+          timer.cancel();
           _triggerNextPhaseOffline();
         }
       }
@@ -381,10 +469,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _triggerNextPhaseOnFirestore() {
-    // Chỉ HOST mới được quyền kích hoạt chuyển phase để tránh race condition
-    // khi nhiều máy có đồng hồ khác nhau cùng gọi đồng thời.
-    final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
-    if (!isHost) return;
+    // Cho phép bất kỳ máy nào cũng có thể kích hoạt chuyển phase khi hết giờ.
+    // Transaction 'secureNextPhase' sẽ đảm bảo chỉ có người đầu tiên thành công
+    // dựa trên việc so khớp phaseNumber. Điều này giúp phòng game không bị kẹt
+    // nếu máy Host bị lag hoặc mất kết nối.
 
     String next;
     int duration;
@@ -429,6 +517,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         _processDayResults(); // Chỉ chạy offline
       } else {
         _resetLocalDayStates();
+      }
+      // Thông báo kênh chat Sói cho phe Sói
+      if (myPlayer?.role.team == RoleTeam.werewolf && myPlayer!.isAlive) {
+        addLog('${langSvc.t('system')}: ${langSvc.t('wolf_chat_open')}');
+        // Cũng thêm vào chat message để hiện trong tab Sói
+        chatMessages.add(ChatMessage(
+          senderName: langSvc.t('system'),
+          content: langSvc.t('wolf_chat_open'),
+          isSystem: true,
+          isWerewolfOnly: true, // Chỉ Sói thấy log này trong chat
+          time: DateTime.now(),
+        ));
       }
     } else if (newPhase == GamePhase.night) {
       if (roomCode.isEmpty) {
@@ -561,7 +661,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         for (var pName in lobbyPlayerNames) {
           if (pName == userName) continue;
           final lastSeen = _localLastSeenMap[pName];
-          if (lastSeen != null && now.difference(lastSeen).inSeconds > 120) {
+          if (lastSeen != null && now.difference(lastSeen).inSeconds > 45) {
             if (currentState == PlayState.lobby) {
               // Kick người chơi khỏi phòng nếu đang ở sảnh
               firestoreSvc.leaveRoom(roomCode, pName);
@@ -584,7 +684,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
         if (_currentHostName != null) {
           final hostLastSeen = _localLastSeenMap[_currentHostName!];
-          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 120) {
+          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 45) {
             // Host đã chết -> Gọi leaveRoom để buộc server đổi Host (Host Migration)
             firestoreSvc.leaveRoom(roomCode, _currentHostName!);
           }
@@ -636,6 +736,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     Future.delayed(const Duration(seconds: 5), () {
       if (currentState != PlayState.roleReveal) return;
       currentState = PlayState.playing;
+      
+      // CATCH-UP: Nếu trong lúc chờ 5s, server đã chuyển phase, xử lý ngay
+      if (phaseNumber > _lastProcessedPhaseNumber) {
+        _lastProcessedPhaseNumber = phaseNumber;
+        _handlePhaseTransitionFromServer(currentPhase);
+      }
+
       dayNumber = 1;
       currentPhase = GamePhase.night;
       hasHealPotion = true;
@@ -663,39 +770,44 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     try {
-      for (int attempt = 0; attempt < 8; attempt++) {
-        if (attempt > 0) {
-          int jitter = 800 + Random().nextInt(400);
-          await Future.delayed(Duration(milliseconds: jitter));
-        }
-
-        if (_activeMatchmakingToken != sessionToken || currentState != PlayState.matchmaking) return;
-
-        debugPrint('Matchmaking: Searching for best available room (Attempt ${attempt + 1}/8)...');
-        String? foundRoomCode;
+       // Attempt 1: Search immediately
+      String? foundRoomCode = await firestoreSvc.findPublicRoom();
+      
+      if (foundRoomCode != null && _activeMatchmakingToken == sessionToken) {
         try {
-          foundRoomCode = await firestoreSvc.findPublicRoom();
-        } catch (e) {
-          debugPrint('Matchmaking error during query: $e');
-        }
-
-        if (foundRoomCode != null && _activeMatchmakingToken == sessionToken) {
-          try {
-            _roomSubscription?.cancel();
-            await joinExistingRoom(foundRoomCode, userName);
-            if (_activeMatchmakingToken == sessionToken) {
-              _activeMatchmakingToken = null;
-              return;
-            } else {
-              leaveRoom();
-              return;
-            }
-          } catch (e) {
-            debugPrint('Matchmaking: Room $foundRoomCode just became full/invalid, searching next...');
+          _roomSubscription?.cancel();
+          await joinExistingRoom(foundRoomCode, userName);
+          if (_activeMatchmakingToken == sessionToken) {
+            _activeMatchmakingToken = null;
+            return;
           }
+        } catch (e) {
+          debugPrint('Matchmaking: Room $foundRoomCode full/invalid, will try creating or searching again.');
         }
       }
 
+      // If no room found, wait a random short time to let someone else create one
+      // OR to be the one who creates it.
+      if (_activeMatchmakingToken == sessionToken) {
+        int randomWait = 500 + Random().nextInt(1500); // 0.5s - 2s
+        await Future.delayed(Duration(milliseconds: randomWait));
+      }
+
+      if (_activeMatchmakingToken != sessionToken || currentState != PlayState.matchmaking) return;
+
+      // Attempt 2: Search one more time
+      foundRoomCode = await firestoreSvc.findPublicRoom();
+      if (foundRoomCode != null && _activeMatchmakingToken == sessionToken) {
+        try {
+          await joinExistingRoom(foundRoomCode, userName);
+          _activeMatchmakingToken = null;
+          return;
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // Final: Create a new room if still none found
       if (_activeMatchmakingToken == sessionToken && currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
@@ -825,6 +937,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool shouldRevealRole(OnlinePlayer player) {
+    if (currentState == PlayState.ended) return true;
     if (!player.isAlive || player.id == myPlayer?.id) return true;
     if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return true;
     if (player.hasBeenScannedBySeer) return true;
@@ -868,9 +981,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void sendUserMessage(String text, {bool forceWerewolfOnly = false}) {
     if (text.trim().isEmpty) return;
 
-    // Nếu forceWerewolfOnly = true hoặc đang trong đêm và là Sói
-    final isWolfChannel = forceWerewolfOnly || (currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf);
     final isGhost = myPlayer != null ? !myPlayer!.isAlive : false;
+    // Ưu tiên kênh Hồn ma nếu đã chết, nếu còn sống và là Sói vào ban đêm thì vào kênh Sói
+    final isWolfChannel = !isGhost && (forceWerewolfOnly || (currentPhase == GamePhase.night && myPlayer?.role.team == RoleTeam.werewolf));
 
     if (roomCode.isEmpty) {
       // OFFLINE: Thêm tin nhắn local và giả lập phản hồi bot
@@ -893,14 +1006,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool isChatDisabled() {
     if (currentState != PlayState.playing) return false;
+    if (myPlayer != null && !myPlayer!.isAlive) return false; // Hồn ma luôn có thể chat
     if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf;
     return false;
   }
 
   String getChatHintText() {
     if (currentState != PlayState.playing) return langSvc.t('chat_hint');
-    if (currentPhase == GamePhase.night) return myPlayer?.role.team != RoleTeam.werewolf ? langSvc.t('chat_night_disabled') : langSvc.t('chat_wolf_hint');
     if (myPlayer != null && !myPlayer!.isAlive) return langSvc.t('chat_ghost_hint');
+    if (currentPhase == GamePhase.night) {
+      return myPlayer?.role.team == RoleTeam.werewolf ? langSvc.t('chat_wolf_hint') : langSvc.t('chat_night_disabled');
+    }
     return langSvc.t('chat_hint');
   }
 
@@ -919,7 +1035,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
       });
     } else {
-      final isHost = lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0] == userName;
+      final isHost = myPlayer?.isHost ?? (lobbyPlayerNames.isNotEmpty && lobbyPlayerNames[0].trim() == userName.trim());
       if (isHost) {
         firestoreSvc.updateRoomData(roomCode, {'phaseEndTime': Timestamp.fromDate(DateTime.now().add(Duration(seconds: seconds)))});
       }
@@ -1031,6 +1147,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     cursedPlayerId = null;
     selectedPlayer = null;
     werewolfTarget = null;
+    witchReviveTargetId = null; // Reset mục tiêu hồi sinh của Phù Thủy
+    cupidSelections.clear();    // Reset lựa chọn ghép đôi
     _myNightBiteTargetId = null; // Reset mục tiêu cắn khi bắt đầu ngày mới
   }
 
@@ -1063,6 +1181,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       for (var p in players) {
         if (p.id == oldTargetId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
         if (p.id == target.id) p.voteCount += weight;
+        if (p.name == userName) p.votedForId = target.id;
       }
       // Sau đó đồng bộ lên server an toàn bằng Transaction
       firestoreSvc.submitVoteTransaction(roomCode, userName, target.id, weight);
@@ -1150,6 +1269,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeWitchHeal(OnlinePlayer target) {
+    // Phù Thủy chỉ cứu phe Dân, không cứu Sói và phe Trung lập
     if (target.role.team != RoleTeam.villager) return;
     if (target.isAlive) {
       target.isProtected = true;
@@ -1201,6 +1321,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     // Cập nhật voteCount local (chỉ dùng để hiển thị trong đêm cho nhóm sói)
     for (var p in players) {
       if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+      if (p.name == userName) p.votedForId = target.id; // Cập nhật local votedForId
     }
     target.voteCount += weight;
 
@@ -1223,6 +1344,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     for (var p in players) {
       if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
+      if (p.name == userName) p.votedForId = null; // Reset local votedForId
     }
     _updateWerewolfLeadingTarget();
 
@@ -1248,6 +1370,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeCupidLink() {
+    if (currentPhase != GamePhase.night) return; // Bảo vệ: Chỉ cho phép ghép đôi ban đêm
+    if (cupidSelections.length < 2) return;
+
     lover1 = cupidSelections[0];
     lover2 = cupidSelections[1];
     if (roomCode.isNotEmpty) {
@@ -1345,6 +1470,15 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     killPlayer(target, langSvc.t('gunner_log').replaceFirst('%s', target.name));
     if (roomCode.isNotEmpty) {
       firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+      firestoreSvc.updateRoomData(roomCode, {'xathuRevealed': true});
+      // Gửi tin nhắn vào chat tổng
+      firestoreSvc.sendChatMessage(roomCode, {
+        'senderName': 'system',
+        'content': 'gunner_log',
+        'targetName': target.name,
+        'isSystem': true,
+        'time': Timestamp.now()
+      });
     } else {
       syncGameState();
     }
@@ -1362,6 +1496,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       killPlayer(target, langSvc.t('hunter_log').replaceFirst('%s', target.name));
       if (roomCode.isNotEmpty) {
         firestoreSvc.updatePlayerField(roomCode, target.id, {'isAlive': false});
+        // Gửi tin nhắn vào chat tổng
+        firestoreSvc.sendChatMessage(roomCode, {
+          'senderName': 'system',
+          'content': 'hunter_log',
+          'targetName': target.name,
+          'isSystem': true,
+          'time': Timestamp.now()
+        });
       }
     }
 

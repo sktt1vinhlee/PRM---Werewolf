@@ -283,95 +283,10 @@ class MainMenuScreen extends StatelessWidget {
   }
 
   void _showJoinRoomDialog(BuildContext context) {
-    final codeController = TextEditingController();
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(langSvc.t('join_room').toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 24),
-            FutureBuilder<String>(
-              future: SharedPreferences.getInstance().then((p) => p.getString('player_name') ?? ''),
-              builder: (context, snapshot) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(langSvc.t('your_name').toUpperCase(), style: const TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
-                    const SizedBox(height: 8),
-                    Text(snapshot.data ?? '...', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    Container(height: 1, width: double.infinity, color: Colors.white12),
-                  ],
-                );
-              }
-            ),
-            const SizedBox(height: 24),
-            Text(langSvc.t('room_code_label').toUpperCase(), style: const TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
-            TextField(
-              controller: codeController,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              decoration: InputDecoration(
-                hintText: langSvc.t('room_code_hint'),
-                hintStyle: const TextStyle(color: Colors.white24, fontSize: 16),
-                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white12)),
-                focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4FC3F7))),
-              ),
-            ),
-            const SizedBox(height: 32),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context), 
-                  child: Text(langSvc.t('cancel').toUpperCase(), style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.bold))
-                ),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: () async {
-                    final prefs = await SharedPreferences.getInstance();
-                    final name = prefs.getString('player_name') ?? '';
-                    final code = codeController.text.trim().toUpperCase();
-                    if (name.isNotEmpty && code.isNotEmpty) {
-                      final exists = await firestoreSvc.checkRoomExists(code);
-                      if (exists) {
-                        await firestoreSvc.joinRoom(code, name);
-                        if (context.mounted) {
-                          final nav = Navigator.of(context);
-                          nav.pop();
-                          nav.push(MaterialPageRoute(builder: (context) => PlayScreen(roomCode: code, userName: name)));
-                        }
-                      } else {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(langSvc.t('room_not_found')),
-                              backgroundColor: Colors.redAccent,
-                            ),
-                          );
-                        }
-                      }
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4FC3F7), 
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                  ),
-                  child: Text(langSvc.t('join').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+      barrierDismissible: false,
+      builder: (context) => const _JoinRoomDialog(),
     );
   }
 
@@ -531,6 +446,197 @@ class MainMenuScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _JoinRoomDialog extends StatefulWidget {
+  const _JoinRoomDialog();
+
+  @override
+  State<_JoinRoomDialog> createState() => _JoinRoomDialogState();
+}
+
+class _JoinRoomDialogState extends State<_JoinRoomDialog> {
+  final TextEditingController _codeController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+  bool _isLoading = false;
+  String? _errorMessage;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString('player_name') ?? '';
+    if (mounted) {
+      setState(() {
+        _nameController.text = name;
+        _isInitialized = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleJoin() async {
+    final code = _codeController.text.trim().toUpperCase();
+    final name = _nameController.text.trim();
+
+    if (name.isEmpty) {
+      setState(() => _errorMessage = langSvc.currentLanguage == AppLanguage.vi 
+        ? 'Vui lòng nhập tên của bạn' 
+        : 'Please enter your name');
+      return;
+    }
+
+    if (code.isEmpty) {
+      setState(() => _errorMessage = langSvc.currentLanguage == AppLanguage.vi 
+        ? 'Vui lòng nhập mã phòng' 
+        : 'Please enter room code');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('player_name', name);
+
+      final exists = await firestoreSvc.checkRoomExists(code).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw Exception('timeout'),
+      );
+
+      if (exists) {
+        await firestoreSvc.joinRoom(code, name);
+        if (mounted) {
+          Navigator.pop(context);
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PlayScreen(roomCode: code, userName: name),
+            ),
+          );
+        }
+      } else {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = langSvc.t('room_not_found');
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          if (e.toString().contains('timeout')) {
+            _errorMessage = langSvc.currentLanguage == AppLanguage.vi 
+              ? 'Lỗi kết nối, vui lòng thử lại' 
+              : 'Connection error, please try again';
+          } else if (e.toString().contains('username_already_exists')) {
+            _errorMessage = langSvc.currentLanguage == AppLanguage.vi 
+              ? 'Tên đã tồn tại trong phòng' 
+              : 'Name already exists in room';
+          } else if (e.toString().contains('Room is full')) {
+            _errorMessage = langSvc.t('room_full');
+          } else {
+            _errorMessage = langSvc.currentLanguage == AppLanguage.vi 
+              ? 'Lỗi khi vào phòng' 
+              : 'Error joining room';
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E293B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(langSvc.t('join_room').toUpperCase(), 
+              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 24),
+            Text(langSvc.t('your_name').toUpperCase(), 
+              style: const TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            TextField(
+              controller: _nameController,
+              enabled: !_isLoading,
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              decoration: const InputDecoration(
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white12)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4FC3F7))),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(langSvc.t('room_code_label').toUpperCase(), 
+              style: const TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            TextField(
+              controller: _codeController,
+              autofocus: true,
+              enabled: !_isLoading,
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: langSvc.t('room_code_hint'),
+                hintStyle: const TextStyle(color: Colors.white24, fontSize: 16),
+                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white12)),
+                focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4FC3F7))),
+              ),
+              onSubmitted: (_) => _handleJoin(),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(_errorMessage!, style: const TextStyle(color: Color(0xFFEF5350), fontSize: 12, fontWeight: FontWeight.bold)),
+            ],
+            const SizedBox(height: 32),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _isLoading ? null : () => Navigator.pop(context), 
+                  child: Text(langSvc.t('cancel').toUpperCase(), 
+                    style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.bold))
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _handleJoin,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4FC3F7), 
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  ),
+                  child: _isLoading 
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                    : Text(langSvc.t('join').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

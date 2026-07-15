@@ -157,7 +157,10 @@ class FirestoreService {
         'currentPhase': 'night',
         'phaseNumber': 1,
         'dayNumber': 1,
-        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 15))), // Ban đêm đầu tiên 15s
+        'xathuRevealed': false,
+        'cursedPlayerId': null,
+        'winner': null,
+        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 20))), // Đồng bộ với durationNight=20
         'messages': FieldValue.arrayUnion([
           {
             'senderName': 'system',
@@ -247,11 +250,21 @@ class FirestoreService {
             if (hangedPlayer['roleId'] == 'nerd') {
               transaction.update(roomRef, {'status': 'ended', 'winner': 'nerd'});
             }
+          } else {
+            messages.add({'senderName': 'system', 'content': 'no_lynch', 'isSystem': true, 'time': Timestamp.now()});
           }
           for (var p in players) {
             p['voteCount'] = 0;
             p['votedForId'] = null; // QUAN TRỌNG: Reset dấu vết vote của từng người
           }
+        }
+
+        if (nextPhase == 'day') {
+          messages.add({'senderName': 'system', 'content': 'sunrise', 'isSystem': true, 'time': Timestamp.now()});
+        } else if (nextPhase == 'voting') {
+          messages.add({'senderName': 'system', 'content': 'voting_start', 'isSystem': true, 'time': Timestamp.now()});
+        } else if (nextPhase == 'night') {
+          messages.add({'senderName': 'system', 'content': 'night_start', 'isSystem': true, 'time': Timestamp.now()});
         }
 
         Map<String, dynamic> updates = {
