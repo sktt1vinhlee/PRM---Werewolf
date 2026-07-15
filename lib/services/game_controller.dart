@@ -940,7 +940,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (currentState == PlayState.ended) return true;
     if (!player.isAlive || player.id == myPlayer?.id) return true;
     if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return true;
-    if (player.hasBeenScannedBySeer) return true;
+
+    // Tiên tri chỉ thấy vai trò của người đã soi vào BAN ĐÊM
+    if (player.hasBeenScannedBySeer && currentPhase == GamePhase.night) return true;
+
     if (lover1 != null && lover2 != null) {
       if ((myPlayer?.id == lover1!.id && player.id == lover2!.id) || (myPlayer?.id == lover2!.id && player.id == lover1!.id)) return true;
     }
@@ -964,6 +967,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (!shouldRevealRole(player)) return 'ẨN VAI TRÒ';
     if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) return 'role_soi';
     return player.role.name;
+  }
+
+  IconData getPlayerRoleIconDisplay(OnlinePlayer player) {
+    if (!shouldRevealRole(player)) return Icons.help_outline;
+    if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) {
+      return Icons.pets; // Hiện icon sói khi bị nguyền
+    }
+    return player.role.icon;
   }
 
   bool shouldShowLoverHeart(OnlinePlayer player) {
@@ -1139,6 +1150,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       p.isTargeted = false;
       p.wasProtectedByBodyguard = false;
       p.wasHealedByWitch = false;
+      p.hasBeenScannedBySeer = false; // Reset hiệu lực soi khi trời sáng
     }
     hasUsedSeerScan = false;
     hasUsedBodyguardProtect = false;
@@ -1269,34 +1281,36 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeWitchHeal(OnlinePlayer target) {
-    // Phù Thủy chỉ cứu phe Dân, không cứu Sói và phe Trung lập
-    if (target.role.team != RoleTeam.villager) return;
-    if (target.isAlive) {
-      target.isProtected = true;
-      target.wasHealedByWitch = true;
-    } else {
-      target.isAlive = true; // Hồi sinh ngay lập tức để UI phản hồi
-      witchReviveTargetId = target.id;
-      target.wasHealedByWitch = true;
-    }
+    final bool wasDead = !target.isAlive;
+    
+    // Cập nhật trạng thái local ngay lập tức
+    target.isAlive = true;
+    target.isProtected = true;
+    target.wasHealedByWitch = true;
+    witchReviveTargetId = target.id;
     hasHealPotion = false;
     hasUsedHealThisNight = true;
-    if (roomCode.isNotEmpty) {
-      // Cập nhật trạng thái bảo vệ và sống sót lên server ngay lập tức
-      firestoreSvc.updatePlayerField(roomCode, target.id, {
-        'isProtected': target.isProtected,
-        'wasHealedByWitch': true,
-        'isAlive': true,
-      });
-      // Đồng thời đặt witchReviveTargetId làm fallback cho Transaction chuyển phase
-      firestoreSvc.updateRoomData(roomCode, {'witchReviveTargetId': target.id});
+
+    // Ghi nhật ký với key đúng từ language_service
+    if (wasDead) {
+      addLog(langSvc.t('witch_revive_log').replaceFirst('%s', target.name));
     } else {
+      addLog(langSvc.t('witch_save_log').replaceFirst('%s', target.name));
+    }
+
+    if (roomCode.isNotEmpty) {
+      // ONLINE: Sử dụng transaction gộp để đảm bảo tính nguyên tử
+      firestoreSvc.useWitchHeal(roomCode, target.id);
+    } else {
+      // OFFLINE: đồng bộ toàn bộ trạng thái
       syncGameState();
     }
+    
     selectedPlayer = null;
     _updateActivity();
     notifyListeners();
   }
+
 
   void executeWitchPoison(OnlinePlayer target) {
     target.isPoisoned = true;
@@ -1389,6 +1403,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void executeCurse(OnlinePlayer target) {
     cursedPlayerId = target.id;
+    addLog(langSvc.t('curse_log').replaceFirst('%s', target.name));
     if (roomCode.isNotEmpty) {
       firestoreSvc.updateRoomData(roomCode, {'cursedPlayerId': cursedPlayerId});
     } else {

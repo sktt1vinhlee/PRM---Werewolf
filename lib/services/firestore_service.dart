@@ -208,23 +208,32 @@ class FirestoreService {
           int? reviveId = data['witchReviveTargetId'];
 
           for (var p in players) {
-            if (p['id'] == reviveId && reviveId != null) {
-              p['isAlive'] = true; // Đảm bảo trạng thái sống được duy trì
-            }
+            // 1. Kiểm tra Sói cắn
             if (p['id'] == victimId && victimId != null) {
+              // Chỉ chết nếu KHÔNG được bảo vệ và KHÔNG được Phù Thủy cứu
               if (p['isProtected'] != true && p['id'] != reviveId) {
                 p['isAlive'] = false;
                 messages.add({'senderName': 'system', 'content': 'night_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
               }
             }
+            
+            // 2. Kiểm tra Phù Thủy cứu (Hồi sinh nếu đã chết từ trước)
+            if (p['id'] == reviveId && reviveId != null) {
+              p['isAlive'] = true; 
+              p['isProtected'] = true;
+            }
+
+            // 3. Kiểm tra Phù Thủy độc
             if (p['isPoisoned'] == true) {
               p['isAlive'] = false;
               messages.add({'senderName': 'system', 'content': 'poison_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
             }
+            
+            // Reset các trạng thái tạm thời cho ngày mới
             p['isProtected'] = false;
             p['isPoisoned'] = false;
             p['voteCount'] = 0;
-            p['votedForId'] = null; // QUAN TRỌNG: Reset dấu vết vote của từng người
+            p['votedForId'] = null;
             p['wasProtectedByBodyguard'] = false;
             p['wasHealedByWitch'] = false;
           }
@@ -304,6 +313,10 @@ class FirestoreService {
 
         if (nextPhase == 'night') {
           updates['dayNumber'] = (data['dayNumber'] ?? 1) + 1;
+        }
+
+        if (nextPhase == 'day') {
+          updates['cursedPlayerId'] = null; // Reset lời nguyền khi trời sáng
         }
 
         transaction.update(roomRef, updates);
@@ -530,14 +543,32 @@ class FirestoreService {
     }
   }
 
-  /// Cập nhật trạng thái công khai/riêng tư của phòng
-  Future<void> updateRoomPrivacy(String roomCode, bool isPublic) async {
+  /// Phù Thủy sử dụng bình cứu
+  Future<void> useWitchHeal(String roomCode, int targetId) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      await _db.collection('rooms').doc(roomCode).update({
-        'isPublic': isPublic,
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        for (var p in players) {
+          if (p['id'] == targetId) {
+            p['isAlive'] = true;
+            p['isProtected'] = true;
+            p['wasHealedByWitch'] = true;
+            break;
+          }
+        }
+        transaction.update(roomRef, {
+          'players': players,
+          'witchReviveTargetId': targetId,
+        });
       });
     } catch (e) {
-      debugPrint('Error updating room privacy: $e');
+      debugPrint('Error in useWitchHeal: $e');
     }
   }
 }
