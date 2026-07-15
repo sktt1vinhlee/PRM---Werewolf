@@ -879,7 +879,7 @@ class _PlayScreenState extends State<PlayScreen> {
 
         if (isVoting && player.isAlive && player.id != my?.id) {
           _controller.executeVote(player);
-        } else if (isNight && my?.role.team == RoleTeam.werewolf && player.isAlive && player.role.team != RoleTeam.werewolf && player.id != _controller.cursedPlayerId) {
+        } else if (isNight && my?.role.team == RoleTeam.werewolf && player.isAlive && player.role.team != RoleTeam.werewolf) {
           _controller.executeWerewolfBite(player);
           _controller.selectPlayer(player);
         } else {

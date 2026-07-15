@@ -962,7 +962,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   String getPlayerRoleNameDisplay(OnlinePlayer player) {
     if (!shouldRevealRole(player)) return 'ẨN VAI TRÒ';
-    if (player.id == cursedPlayerId && player.isAlive) return 'role_soi';
+    if (currentState != PlayState.ended && player.id == cursedPlayerId && player.isAlive) return 'role_soi';
     return player.role.name;
   }
 
@@ -1580,8 +1580,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    int w = players.where((p) => p.isAlive && (p.role.team == RoleTeam.werewolf || p.id == cursedPlayerId)).length;
-    int g = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).length;
+    int w = players.where((p) => p.isAlive && p.role.team == RoleTeam.werewolf).length;
+    int g = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf).length;
 
     // 3. Phe Dân Làng thắng
     if (w == 0) {
@@ -1683,7 +1683,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void simulateWerewolfNightTarget() {
     final bots = players.where((p) => p.isAlive && p.id != myPlayer?.id && p.role.team == RoleTeam.werewolf).toList();
-    final targets = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf && p.id != cursedPlayerId).toList();
+    final targets = players.where((p) => p.isAlive && p.role.team != RoleTeam.werewolf).toList();
     if (targets.isEmpty) return;
     for (var b in bots) {
       Timer(Duration(milliseconds: 1000 + Random().nextInt(8000)), () {
