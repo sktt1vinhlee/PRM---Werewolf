@@ -55,7 +55,7 @@ class FirestoreService {
   Future<void> joinRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-      
+
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) {
@@ -94,14 +94,14 @@ class FirestoreService {
   Future<void> leaveRoom(String roomCode, String userName) async {
     try {
       final roomRef = _db.collection('rooms').doc(roomCode);
-      
+
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
         List players = List.from(data['players'] ?? []);
-        
+
         int index = players.indexWhere((p) => p['name'] == userName);
         if (index == -1) return;
 
@@ -176,12 +176,12 @@ class FirestoreService {
   /// CHUYỂN PHASE AN TOÀN VÀ TÍNH TOÁN KẾT QUẢ
   Future<void> secureNextPhase(String roomCode, int expectedPhaseNumber, String nextPhase, int durationSeconds) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
-    
+
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-        
+
         final data = snapshot.data()!;
         int currentPN = data['phaseNumber'] ?? 0;
         if (currentPN != expectedPhaseNumber) return;
@@ -201,9 +201,9 @@ class FirestoreService {
               victimId = p['id'];
             }
           }
-          
+
           int? reviveId = data['witchReviveTargetId'];
-          
+
           for (var p in players) {
             if (p['id'] == victimId && victimId != null) {
               if (p['isProtected'] != true && p['id'] != reviveId) {
@@ -222,10 +222,26 @@ class FirestoreService {
             p['wasProtectedByBodyguard'] = false;
             p['wasHealedByWitch'] = false;
           }
-        } 
+        }
         else if (currentPhase == 'voting') {
-          // ... (giữ nguyên logic tính maxVotes)
-          if (hangedPlayer != null && maxVotes > 1) {
+          // TÍNH TOÁN NGƯỜI BỊ TREO CỔ
+          int maxVotes = 0;
+          dynamic hangedPlayer;
+          bool isTie = false;
+
+          for (var p in players) {
+            int v = p['voteCount'] ?? 0;
+            if (v > maxVotes) {
+              maxVotes = v;
+              hangedPlayer = p;
+              isTie = false;
+            } else if (v == maxVotes && v > 0) {
+              isTie = true;
+            }
+          }
+
+          // Chỉ treo cổ nếu có người bị vote nhiều nhất và không bị huề phiếu (và phải > 1 phiếu)
+          if (hangedPlayer != null && maxVotes > 1 && !isTie) {
             hangedPlayer['isAlive'] = false;
             messages.add({'senderName': 'system', 'content': 'lynched', 'targetName': hangedPlayer['name'], 'isSystem': true, 'time': Timestamp.now()});
             if (hangedPlayer['roleId'] == 'nerd') {
@@ -278,18 +294,18 @@ class FirestoreService {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-        
+
         final data = snapshot.data()!;
         List players = List.from(data['players'] ?? []);
-        
+
         int voterIndex = players.indexWhere((p) => p['name'] == voterName);
         if (voterIndex == -1) return;
-        
+
         int? oldTargetId = players[voterIndex]['votedForId'];
         if (oldTargetId == newTargetId) return;
 
         bool changed = false;
-        
+
         if (oldTargetId != null && oldTargetId != -1) {
           int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
           if (oldTargetIdx != -1) {
@@ -306,7 +322,7 @@ class FirestoreService {
             changed = true;
           }
         }
-        
+
         players[voterIndex]['votedForId'] = newTargetId;
         changed = true;
 

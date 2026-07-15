@@ -45,8 +45,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
 
   // Dữ liệu theo dõi kết nối
-  Map<String, Timestamp> _serverLastSeenMap = {};
-  Map<String, DateTime> _localLastSeenMap = {};
+  final Map<String, Timestamp> _serverLastSeenMap = {};
+  final Map<String, DateTime> _localLastSeenMap = {};
   String? _currentHostName;
 
   bool hasUsedSeerScan = false;
@@ -276,7 +276,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                     _myCurrentVoteTargetId = players[i].votedForId;
                   }
                 }
-                
+
                 // Đồng bộ flag isTargeted cho UI vẽ viền
                 if (myPlayer != null) {
                   players[i].isTargeted = (players[i].id == myPlayer!.votedForId);
@@ -1065,7 +1065,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         if (p.id == target.id) p.voteCount += weight;
       }
       // Sau đó đồng bộ lên server an toàn bằng Transaction
-      firestoreSvc.submitVoteTransaction(roomCode, oldTargetId, target.id, weight);
+      firestoreSvc.submitVoteTransaction(roomCode, userName, target.id, weight);
     } else {
       // OFFLINE: ghi thẳng vào local state
       for (var p in players) {
@@ -1208,7 +1208,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     // Đồng bộ mục tiêu cắn lên server (dùng Transaction riêng cho bite)
     if (roomCode.isNotEmpty) {
-      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, target.id, weight);
+      firestoreSvc.submitVoteTransaction(roomCode, userName, target.id, weight);
       firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': target.id});
     }
     _updateActivity();
@@ -1228,7 +1228,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     if (roomCode.isNotEmpty) {
       // Xoá vote bite trên server
-      firestoreSvc.submitVoteTransaction(roomCode, oldBiteId, -1, weight); // -1 = không ai
+      firestoreSvc.submitVoteTransaction(roomCode, userName, -1, weight); // -1 = không ai
       firestoreSvc.updateRoomData(roomCode, {'werewolfTargetId': null});
     }
     _updateActivity();
@@ -1373,7 +1373,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     _updateActivity();
     final gameOver = checkGameOver();
-    
+
     // NẾU HẾT GIỜ TRONG LÚC THỢ SĂN ĐANG CHỌN -> CHUYỂN GIAI ĐOẠN NGAY SAU KHI BẮN
     if (gameOver.isEmpty && phaseTimerSeconds <= 0) {
       if (roomCode.isNotEmpty) {
@@ -1382,7 +1382,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         _triggerNextPhaseOffline();
       }
     }
-    
+
     notifyListeners();
   }
 
