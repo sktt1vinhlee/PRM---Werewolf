@@ -151,7 +151,6 @@ class _PlayScreenState extends State<PlayScreen> {
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF1E293B),
           title: Text('${langSvc.t('exit_room')}?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          content: Text(langSvc.t('developing'), style: const TextStyle(color: Colors.white70)),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(langSvc.t('cancel'), style: const TextStyle(color: Colors.white60))),
             ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC62828)), child: Text(langSvc.t('exit_room'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
@@ -983,7 +982,20 @@ class _PlayScreenState extends State<PlayScreen> {
             Wrap(spacing: 2, children: icons)
           ],
           if (player.voteCount > 0 && showVotes) ...[
-            Container(margin: const EdgeInsets.only(top: 4), padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.8), borderRadius: BorderRadius.circular(6)), child: Text('${player.voteCount}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)))
+            Container(
+              margin: const EdgeInsets.only(top: 4), 
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), 
+              decoration: BoxDecoration(
+                color: const Color(0xFFB71C1C), // Đỏ đậm rực rỡ
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 4)],
+              ), 
+              child: Text(
+                '${player.voteCount}', 
+                style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900)
+              )
+            )
           ],
         ],
       ),
@@ -1406,9 +1418,21 @@ class _PlayScreenState extends State<PlayScreen> {
           ]);
         }
       }
-      if (my.role.id == 'xa_thu' && _controller.xathuBullets > 0 && target.isAlive && target.id != my.id) {
+      if (my.role.id == 'xa_thu' && target.isAlive && target.id != my.id) {
+        final bool canShoot = _controller.xathuBullets > 0 && !_controller.xathuHasShotToday;
         return Row(children: [
-          Expanded(child: ElevatedButton(onPressed: () => _controller.executeGunnerShoot(target), style: ElevatedButton.styleFrom(backgroundColor: Colors.lightBlue), child: FittedBox(child: Text(langSvc.t('action_gunner_shoot'), style: const TextStyle(color: Colors.white))))),
+          Expanded(child: ElevatedButton(
+            onPressed: canShoot ? () => _controller.executeGunnerShoot(target) : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: canShoot ? Colors.lightBlue : Colors.grey,
+            ),
+            child: FittedBox(
+              child: Text(
+                '${langSvc.t('action_gunner_shoot')} (${_controller.xathuBullets})',
+                style: const TextStyle(color: Colors.white)
+              )
+            )
+          )),
         ]);
       }
     }

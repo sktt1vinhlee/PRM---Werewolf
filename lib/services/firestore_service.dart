@@ -158,6 +158,8 @@ class FirestoreService {
         'phaseNumber': 1,
         'dayNumber': 1,
         'xathuRevealed': false,
+        'xathuBullets': 2,
+        'xathuHasShotToday': false,
         'cursedPlayerId': null,
         'winner': null,
         'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 20))), // Đồng bộ với durationNight=20
@@ -204,36 +206,48 @@ class FirestoreService {
           // TÍNH TOÁN NẠN NHÂN DỰA TRÊN PHIẾU BẦU CỦA SÓI
           int maxVotes = 0;
           int? victimId;
+          bool isNightTie = false;
           for (var p in players) {
             int v = p['voteCount'] ?? 0;
             if (v > maxVotes) {
               maxVotes = v;
               victimId = p['id'];
+              isNightTie = false;
+            } else if (v == maxVotes && v > 0) {
+              isNightTie = true;
             }
           }
+          if (isNightTie) victimId = null; // Huề phiếu ban đêm -> Không ai bị cắn
 
           int? reviveId = data['witchReviveTargetId'];
+          List<int> killedThisNight = [];
 
           for (var p in players) {
-            // 1. Kiểm tra Sói cắn
-            if (p['id'] == victimId && victimId != null) {
-              // Chỉ chết nếu KHÔNG được bảo vệ và KHÔNG được Phù Thủy cứu
-              if (p['isProtected'] != true && p['id'] != reviveId) {
+            bool shouldDieFromWolf = (p['id'] == victimId && victimId != null);
+            bool isSavedByWitch = (p['id'] == reviveId && reviveId != null);
+
+            // 1. Xử lý Sói cắn & Phù Thủy cứu
+            if (shouldDieFromWolf) {
+              if (p['isProtected'] != true && !isSavedByWitch) {
                 p['isAlive'] = false;
+                killedThisNight.add(p['id']);
                 messages.add({'senderName': 'system', 'content': 'night_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
               }
             }
             
-            // 2. Kiểm tra Phù Thủy cứu (Hồi sinh nếu đã chết từ trước)
-            if (p['id'] == reviveId && reviveId != null) {
+            // 2. Cập nhật trạng thái Phù Thủy cứu (Hồi sinh)
+            if (isSavedByWitch) {
               p['isAlive'] = true; 
               p['isProtected'] = true;
+              p['wasHealedByWitch'] = true;
             }
 
             // 3. Kiểm tra Phù Thủy độc
             if (p['isPoisoned'] == true) {
               p['isAlive'] = false;
-              messages.add({'senderName': 'system', 'content': 'poison_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
+              if (!killedThisNight.contains(p['id'])) {
+                messages.add({'senderName': 'system', 'content': 'poison_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
+              }
             }
             
             // Reset các trạng thái tạm thời cho ngày mới
@@ -318,6 +332,7 @@ class FirestoreService {
 
         if (nextPhase == 'day') {
           updates['cursedPlayerId'] = null; // Reset lời nguyền khi trời sáng
+          updates['xathuHasShotToday'] = false;
         }
 
         transaction.update(roomRef, updates);
@@ -329,8 +344,27 @@ class FirestoreService {
         // Nếu Nerd đã thắng (status ended), không kiểm tra các điều kiện thắng khác
         if (updates['status'] == 'ended') return;
 
+        // KIỂM TRA TÌNH NHÂN CÒN SỐNG: Nếu 2 tình nhân còn sống, chưa phân định thắng thua đội ngay
+        final int? lover1Id = data['lover1Id'];
+        final int? lover2Id = data['lover2Id'];
+        bool bothLoversAlive = false;
+        if (lover1Id != null && lover2Id != null) {
+          bool l1Alive = players.any((p) => p['id'] == lover1Id && p['isAlive'] == true);
+          bool l2Alive = players.any((p) => p['id'] == lover2Id && p['isAlive'] == true);
+          bothLoversAlive = l1Alive && l2Alive;
+        }
+
         int wolves = players.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
         int others = players.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+        int totalAlive = wolves + others;
+
+        if (bothLoversAlive) {
+          // Phe Tình Nhân thắng khi chỉ còn họ (hoặc thêm Cupid) sống sót
+          if (totalAlive == 2 || (totalAlive == 3 && players.any((p) => p['isAlive'] == true && p['roleId'] == 'cupid'))) {
+            transaction.update(roomRef, {'status': 'ended', 'winner': 'lovers'});
+          }
+          return; // Tạm dừng các điều kiện thắng Phe Dân/Sói nếu Tình Nhân còn sống
+        }
 
         if (wolves == 0) {
           transaction.update(roomRef, {'status': 'ended', 'winner': 'villagers'});
@@ -357,6 +391,10 @@ class FirestoreService {
         int voterIndex = players.indexWhere((p) => p['name'] == voterName);
         if (voterIndex == -1) return;
 
+        // ĐIỀU CHỈNH ONLINE: Ban ngày mọi phiếu bầu đều có trọng số là 1 (theo yêu cầu)
+        // Bất kể client gửi weight bao nhiêu, server sẽ dùng 1.
+        const int actualWeight = 1;
+
         int? oldTargetId = players[voterIndex]['votedForId'];
         if (oldTargetId == newTargetId) return;
 
@@ -365,7 +403,7 @@ class FirestoreService {
         if (oldTargetId != null && oldTargetId != -1) {
           int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
           if (oldTargetIdx != -1) {
-            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - weight;
+            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - actualWeight;
             if (players[oldTargetIdx]['voteCount'] < 0) players[oldTargetIdx]['voteCount'] = 0;
             changed = true;
           }
@@ -374,7 +412,7 @@ class FirestoreService {
         if (newTargetId != -1) {
           int newTargetIdx = players.indexWhere((p) => p['id'] == newTargetId);
           if (newTargetIdx != -1) {
-            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + weight;
+            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + actualWeight;
             changed = true;
           }
         }
@@ -573,6 +611,115 @@ class FirestoreService {
       });
     } catch (e) {
       debugPrint('Error in useWitchHeal: $e');
+    }
+  }
+
+  /// Thực hiện hành động tiêu diệt (Xạ Thủ, Thợ Săn, Phù Thủy độc) trong 1 Transaction duy nhất để đạt tốc độ cao nhất
+  Future<void> executeKillAction({
+    required String roomCode,
+    required int targetId,
+    Map<String, dynamic>? roomUpdates,
+    Map<String, dynamic>? systemMessage,
+  }) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+        List messages = List.from(data['messages'] ?? []);
+
+        // 1. Cập nhật trạng thái người chơi
+        for (var p in players) {
+          if (p['id'] == targetId) {
+            p['isAlive'] = false;
+            break;
+          }
+        }
+
+        // 2. Gộp các cập nhật của phòng
+        Map<String, dynamic> finalUpdates = {
+          'players': players,
+        };
+        if (roomUpdates != null) {
+          finalUpdates.addAll(roomUpdates);
+        }
+
+        // 3. Thêm tin nhắn hệ thống nếu có
+        if (systemMessage != null) {
+          messages.add(systemMessage);
+          finalUpdates['messages'] = messages;
+        }
+
+        transaction.update(roomRef, finalUpdates);
+      }, maxAttempts: 2); // Giảm maxAttempts để phản hồi nhanh hoặc lỗi sớm
+    } catch (e) {
+      debugPrint('Error in executeKillAction: $e');
+    }
+  }
+
+  /// Xử lý Bite của Sói (Gộp vote và werewolfTargetId)
+  Future<void> submitBiteTransaction(String roomCode, String voterName, int newTargetId, int weight) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(roomRef);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data()!;
+        List players = List.from(data['players'] ?? []);
+
+        int voterIndex = players.indexWhere((p) => p['name'] == voterName);
+        if (voterIndex == -1) return;
+
+        // ĐIỀU CHỈNH ONLINE: Server tự xác định trọng số dựa trên vai trò thực tế
+        final int actualWeight = players[voterIndex]['roleId'] == 'soi_dau_dan' ? 2 : 1;
+        debugPrint('Transaction: $voterName (role: ${players[voterIndex]['roleId']}) votes $newTargetId with weight $actualWeight');
+
+        int? oldTargetId = players[voterIndex]['votedForId'];
+        if (oldTargetId == newTargetId) return;
+
+        if (oldTargetId != null && oldTargetId != -1) {
+          int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
+          if (oldTargetIdx != -1) {
+            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - actualWeight;
+            if (players[oldTargetIdx]['voteCount'] < 0) players[oldTargetIdx]['voteCount'] = 0;
+          }
+        }
+
+        if (newTargetId != -1) {
+          int newTargetIdx = players.indexWhere((p) => p['id'] == newTargetId);
+          if (newTargetIdx != -1) {
+            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + actualWeight;
+          }
+        }
+
+        players[voterIndex]['votedForId'] = newTargetId;
+
+        // Tính toán lại werewolfTargetId ngay trong Transaction với luật Đồng thuận (Consensus)
+        int maxV = 0;
+        int? leadingTargetId;
+        bool isTie = false;
+        for (var p in players) {
+          int v = p['voteCount'] ?? 0;
+          if (v > maxV) {
+            maxV = v;
+            leadingTargetId = p['id'];
+            isTie = false;
+          } else if (v == maxV && v > 0) {
+            isTie = true;
+          }
+        }
+
+        transaction.update(roomRef, {
+          'players': players,
+          'werewolfTargetId': isTie ? null : leadingTargetId,
+        });
+      }, maxAttempts: 2);
+    } catch (e) {
+      debugPrint('Error in submitBiteTransaction: $e');
     }
   }
 }
