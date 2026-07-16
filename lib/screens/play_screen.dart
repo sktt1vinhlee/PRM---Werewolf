@@ -958,10 +958,18 @@ class _PlayScreenState extends State<PlayScreen> {
     if (_controller.currentPhase == GamePhase.night && my.role.team == RoleTeam.werewolf) {
       final voters = _controller.players.where((p) => p.isAlive && p.role.team == RoleTeam.werewolf && p.votedForId == player.id);
       for (var voter in voters) {
+        final weight = voter.role.id == 'soi_dau_dan' ? 2 : 1;
         icons.add(Container(
-          padding: const EdgeInsets.all(1),
-          decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 0.5)),
-          child: Text('${voter.id}', style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          decoration: BoxDecoration(
+            color: Colors.red, 
+            borderRadius: BorderRadius.circular(8), 
+            border: Border.all(color: Colors.white, width: 0.5)
+          ),
+          child: Text(
+            '${voter.id}${weight > 1 ? " (x$weight)" : ""}', 
+            style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)
+          ),
         ));
       }
     }

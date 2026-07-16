@@ -203,31 +203,27 @@ class FirestoreService {
         };
 
         if (currentPhase == 'night') {
-          // TÍNH TOÁN NẠN NHÂN DỰA TRÊN PHIẾU BẦU CỦA SÓI
-          int maxVotes = 0;
-          int? victimId;
-          bool isNightTie = false;
+          // ĐIỀU CHỈNH: Các Ma Sói hoạt động độc lập - Tất cả mục tiêu bị Sói chọn đều chết
+          List<int> wolfTargets = [];
           for (var p in players) {
-            int v = p['voteCount'] ?? 0;
-            if (v > maxVotes) {
-              maxVotes = v;
-              victimId = p['id'];
-              isNightTie = false;
-            } else if (v == maxVotes && v > 0) {
-              isNightTie = true;
+            if (p['votedForId'] != null && p['votedForId'] != -1) {
+              // Kiểm tra xem người vote có phải là Sói không
+              final voterRole = p['roleId'] ?? '';
+              if (voterRole == 'soi' || voterRole == 'soi_nguyen' || voterRole == 'soi_dau_dan') {
+                wolfTargets.add(p['votedForId']);
+              }
             }
           }
-          if (isNightTie) victimId = null; // Huề phiếu ban đêm -> Không ai bị cắn
 
           int? reviveId = data['witchReviveTargetId'];
           List<int> killedThisNight = [];
 
           for (var p in players) {
-            bool shouldDieFromWolf = (p['id'] == victimId && victimId != null);
+            bool isTargetedByWolf = wolfTargets.contains(p['id']);
             bool isSavedByWitch = (p['id'] == reviveId && reviveId != null);
 
-            // 1. Xử lý Sói cắn & Phù Thủy cứu
-            if (shouldDieFromWolf) {
+            // 1. Xử lý Sói cắn (Nhiều mục tiêu độc lập)
+            if (isTargetedByWolf) {
               if (p['isProtected'] != true && !isSavedByWitch) {
                 p['isAlive'] = false;
                 killedThisNight.add(p['id']);

@@ -41,6 +41,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _heartbeatTimer;       // Heartbeat: cập nhật lastSeen định kỳ
   Timer? _zombieTimer;          // Quét và kick/kill zombie
   Timer? _hunterTimeoutTimer;   // Timeout cho kỹ năng Thợ Săn
+  Timer? _endGameTimer;         // Hẹn giờ xóa phòng khi kết thúc game
   StreamSubscription? _roomSubscription;
   Timestamp? _lastSyncedEndTime;
   int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
@@ -203,15 +204,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
       final data = snapshot.data();
       if (data != null) {
-        String? winnerFromServer;
-        // KIỂM TRA TRẠNG THÁI KẾT THÚC GAME TỪ SERVER (Chỉ lưu lại, xử lý sau khi sync data)
-        if (data['status'] == 'ended' && currentState != PlayState.ended) {
-          winnerFromServer = data['winner'] ?? '';
-        }
-
         final List playersData = data['players'] ?? [];
         final List messagesData = data['messages'] ?? [];
         final int serverPhaseNumber = data['phaseNumber'] ?? 0;
+        
+        String? winnerFromServer;
+        if (data['status'] == 'ended' && currentState != PlayState.ended) {
+          winnerFromServer = data['winner'] ?? '';
+        }
 
         lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
         playerCount = data['playerCount'] ?? playerCount;
@@ -390,47 +390,53 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           _handleGameStarted(playersData);
         }
 
-        // XỬ LÝ KẾT THÚC GAME SAU KHI ĐÃ ĐỒNG BỘ DỮ LIỆU
+        // XỬ LÝ KẾT THÚC GAME SAU KHI ĐÃ ĐỒNG BỘ DỮ LIỆU CỦA SNAPSHOT NÀY
         if (winnerFromServer != null) {
-          currentState = PlayState.ended;
-          if (winnerFromServer == 'nerd') {
-            winnerMessage = '${langSvc.t('role_nerd')} thắng!';
-          } else if (winnerFromServer == 'werewolves') {
-            winnerMessage = 'Ma Sói thắng!';
-          } else if (winnerFromServer == 'villagers') {
-            winnerMessage = 'Dân Làng thắng!';
-          } else if (winnerFromServer == 'lovers') {
-            winnerMessage = 'Phe Tình Nhân thắng! ❤️';
-          }
-          _phaseTimer?.cancel();
-
-          // TỰ ĐỘNG XÓA PHÒNG & THOÁT (10 giây để người chơi xem kết quả)
-          if (roomCode.isNotEmpty) {
-            final bool isHost = _currentHostName == userName || myPlayer?.isHost == true;
-            final codeToDelete = roomCode;
-            
-            Timer(const Duration(seconds: 10), () {
-              if (isHost) {
-                firestoreSvc.deleteRoom(codeToDelete).catchError((e) => debugPrint('Auto-delete room error: $e'));
-              }
-              // Tất cả người chơi tự reset state để về Main Menu
-              if (roomCode == codeToDelete) {
-                _roomSubscription?.cancel();
-                _roomSubscription = null;
-                roomCode = '';
-                currentState = PlayState.setup;
-                notifyListeners();
-              }
-            });
-          }
-
-          notifyListeners();
+          _handleGameEnd(winnerFromServer);
           return;
         }
 
         notifyListeners();
       }
     });
+  }
+
+  void _handleGameEnd(String winner) {
+    currentState = PlayState.ended;
+    if (winner == 'nerd') {
+      winnerMessage = '${langSvc.t('role_nerd')} thắng!';
+    } else if (winner == 'werewolves') {
+      winnerMessage = 'Ma Sói thắng!';
+    } else if (winner == 'villagers') {
+      winnerMessage = 'Dân Làng thắng!';
+    } else if (winner == 'lovers') {
+      winnerMessage = 'Phe Tình Nhân thắng! ❤️';
+    }
+    _phaseTimer?.cancel();
+
+    // TỰ ĐỘNG XÓA PHÒNG & THOÁT (10 giây để người chơi xem kết quả)
+    if (roomCode.isNotEmpty) {
+      final bool isHost = _currentHostName == userName || myPlayer?.isHost == true;
+      final codeToDelete = roomCode;
+      debugPrint('Game ended. Host status: $isHost. Room $codeToDelete will be deleted in 10s.');
+
+      _endGameTimer?.cancel();
+      _endGameTimer = Timer(const Duration(seconds: 10), () {
+        if (isHost) {
+          debugPrint('Timer fired: Host is deleting room $codeToDelete');
+          firestoreSvc.deleteRoom(codeToDelete).catchError((e) => debugPrint('Auto-delete room error: $e'));
+        }
+        // Tất cả người chơi tự reset state để về Main Menu (nếu chưa thoát thủ công)
+        if (roomCode == codeToDelete || roomCode.isEmpty) {
+          _roomSubscription?.cancel();
+          _roomSubscription = null;
+          roomCode = '';
+          currentState = PlayState.setup;
+          notifyListeners();
+        }
+      });
+    }
+    notifyListeners();
   }
 
   void _handleRoomDeleted() {
@@ -1143,20 +1149,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _processNightResults() {
-    OnlinePlayer? finalVictim;
-    int maxV = 0;
-    bool isNightTie = false;
-    for (var p in players) {
-      if (p.voteCount > maxV) {
-        maxV = p.voteCount;
-        finalVictim = p;
-        isNightTie = false;
-      } else if (p.voteCount == maxV && maxV > 0) {
-        isNightTie = true;
-      }
-    }
-    
-    if (isNightTie) finalVictim = null; // Huề phiếu ban đêm -> Không ai chết
+    // ĐIỀU CHỈNH: Các Ma Sói hoạt động độc lập - Thu thập tất cả mục tiêu bị cắn
+    final wolfTargetIds = players
+        .where((p) => p.isAlive && p.role.team == RoleTeam.werewolf && p.votedForId != null)
+        .map((p) => p.votedForId!)
+        .toSet();
 
     // Xử lý Phù Thủy hồi sinh trước
     if (witchReviveTargetId != null) {
@@ -1166,8 +1163,11 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // Sau đó mới tính toán cái chết
-    if (finalVictim != null && !finalVictim.isProtected && finalVictim.id != witchReviveTargetId) {
-      killPlayer(finalVictim, langSvc.t('night_casualty').replaceFirst('%s', finalVictim.name));
+    for (int targetId in wolfTargetIds) {
+      final victim = players.firstWhere((p) => p.id == targetId);
+      if (!victim.isProtected && victim.id != witchReviveTargetId) {
+        killPlayer(victim, langSvc.t('night_casualty').replaceFirst('%s', victim.name));
+      }
     }
     
     for (var p in players) {
