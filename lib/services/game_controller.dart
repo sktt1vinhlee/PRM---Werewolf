@@ -272,77 +272,70 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         // CẬP NHẬT TRẠNG THÁI NGƯỜI CHƠI TỪ FIREBASE
         if (playersData.isNotEmpty) {
           final hostData = playersData.firstWhere((p) => p['isHost'] == true, orElse: () => null);
-          if (hostData != null) {
-            _currentHostName = hostData['name'];
-          }
+          if (hostData != null) _currentHostName = hostData['name'];
 
-          // Dọn dẹp map lastSeen của những người đã thoát
-          final currentNames = playersData.map((p) => p['name'] as String).toSet();
-          _serverLastSeenMap.removeWhere((key, value) => !currentNames.contains(key));
-          _localLastSeenMap.removeWhere((key, value) => !currentNames.contains(key));
-
-          for (var pData in playersData) {
-            final String pName = pData['name'];
-            final Timestamp? serverLastSeen = pData['lastSeen'];
-
-            if (serverLastSeen != null) {
-              final prevServerLastSeen = _serverLastSeenMap[pName];
-              if (prevServerLastSeen == null || prevServerLastSeen != serverLastSeen) {
-                _serverLastSeenMap[pName] = serverLastSeen;
-                _localLastSeenMap[pName] = DateTime.now();
-              }
-            }
-          }
+          final Map<String, dynamic> dataMap = {
+            for (var p in playersData) p['name'].toString().trim(): p
+          };
 
           if (currentState == PlayState.playing) {
+            // Lấy dữ liệu của chính mình để kiểm tra tình trạng đồng bộ
+            final myDataOnServer = dataMap[userName.trim()];
+            // Firestore dùng -1, local dùng null
+            final int? serverMyVotedForId = (myDataOnServer?['votedForId'] == -1 || myDataOnServer?['votedForId'] == null) 
+                ? null : myDataOnServer?['votedForId'];
+            final int? localMyVotedForId = (currentPhase == GamePhase.night) ? _myNightBiteTargetId : _myCurrentVoteTargetId;
+            
+            // Nếu local và server chưa khớp, ta đang ở trạng thái "Chờ đồng bộ" (Pending)
+            final bool isMyVotePending = serverMyVotedForId != localMyVotedForId;
+            final int myWeight = (myPlayer?.role.id == 'soi_dau_dan') ? 2 : 1;
+            final now = DateTime.now();
+
             for (int i = 0; i < players.length; i++) {
-              final pData = playersData.firstWhere((p) => p['name'] == players[i].name, orElse: () => null);
+              final pData = dataMap[players[i].name.trim()];
               if (pData != null) {
                 final bool isAliveOnServer = pData['isAlive'] ?? true;
-
-                // Phát hiện cái chết để kích hoạt kỹ năng Thợ Săn (chế độ Online)
-                if (players[i].isAlive && !isAliveOnServer) {
-                  if (players[i].name == userName && players[i].role.id == 'tho_san') {
-                    if (!hunterSkillTriggered) {
-                      _triggerHunterSkill(players[i]);
-                    }
-                  }
+                if (players[i].isAlive && !isAliveOnServer && players[i].name == userName && players[i].role.id == 'tho_san') {
+                  if (!hunterSkillTriggered) _triggerHunterSkill(players[i]);
                 }
 
                 players[i].isAlive = isAliveOnServer;
-                players[i].voteCount = pData['voteCount'] ?? 0;
-                players[i].votedForId = pData['votedForId']; // Đồng bộ mục tiêu đang vote
                 players[i].isHost = pData['isHost'] ?? false;
                 players[i].isProtected = pData['isProtected'] ?? false;
                 players[i].isPoisoned = pData['isPoisoned'] ?? false;
                 players[i].wasProtectedByBodyguard = pData['wasProtectedByBodyguard'] ?? false;
                 players[i].wasHealedByWitch = pData['wasHealedByWitch'] ?? false;
 
-                final bool isMe = (players[i].name == userName);
-                if (isMe) {
-                  myPlayer = players[i];
-                  // ĐỒNG BỘ LẠI BIẾN LOCAL VOTE: Chỉ đồng bộ nếu đã qua 2s kể từ lần vote cuối (tránh flicker)
-                  final now = DateTime.now();
-                  bool canSyncVote = _lastVoteTime == null || now.difference(_lastVoteTime!).inSeconds > 2;
+                // CƠ CHẾ VÁ VOTE (PATCHING) - CHỐNG FLICKER TUYỆT ĐỐI
+                int displayVoteCount = pData['voteCount'] ?? 0;
+                if (isMyVotePending) {
+                  if (players[i].id == localMyVotedForId) displayVoteCount += myWeight;
+                  if (players[i].id == serverMyVotedForId) displayVoteCount -= myWeight;
+                }
+                players[i].voteCount = displayVoteCount.clamp(0, 99);
+                players[i].votedForId = pData['votedForId']; 
 
-                  if (canSyncVote) {
+                if (players[i].name.trim() == userName.trim()) {
+                  myPlayer = players[i];
+                  // CHỈ ĐỒNG BỘ NGƯỢC NẾU SERVER ĐÃ KHỚP HOẶC QUÁ 3 GIÂY (Tránh nhảy số)
+                  bool hasSynced = serverMyVotedForId == localMyVotedForId;
+                  if (_lastVoteTime == null || now.difference(_lastVoteTime!).inSeconds > 3 || hasSynced) {
                     if (currentPhase == GamePhase.night) {
-                      _myNightBiteTargetId = players[i].votedForId;
+                      _myNightBiteTargetId = serverMyVotedForId;
                     } else {
-                      _myCurrentVoteTargetId = players[i].votedForId;
+                      _myCurrentVoteTargetId = serverMyVotedForId;
                     }
                   }
                 }
-
-                // Đồng bộ flag isTargeted cho UI vẽ viền
-                if (myPlayer != null) {
-                  final int? currentTargetId = (currentPhase == GamePhase.night) ? _myNightBiteTargetId : _myCurrentVoteTargetId;
-                  players[i].isTargeted = (players[i].id == currentTargetId);
-                }
-              } else {
-                // Người chơi đã thoát khỏi phòng (không có trong playersData trên server)
-                // KHÔNG LÀM GÌ CẢ: Giữ họ trong danh sách và còn sống như yêu cầu
+                players[i].isTargeted = false;
               }
+            }
+
+            // TỐI ƯU: Tính toán lại mục tiêu dẫn đầu của Sói dựa trên dữ liệu vote mới nhất từ server
+            if (currentPhase == GamePhase.night) {
+              _updateWerewolfLeadingTarget();
+            } else {
+              werewolfTarget = null;
             }
           }
         }
@@ -992,10 +985,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Color getPlayerBorderColor(OnlinePlayer player) {
-    if (selectedPlayer?.id == player.id || player.isTargeted) return const Color(0xFFFFD54F);
     if (!player.isAlive) return Colors.grey[700]!;
     if (player.id == myPlayer?.id) return player.role.primaryColor;
-    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350);
+    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350).withOpacity(0.5);
     if (player.hasBeenScannedBySeer) {
       final isWolf = player.role.team == RoleTeam.werewolf || player.id == cursedPlayerId;
       return isWolf ? const Color(0xFFEF5350) : const Color(0xFF81C784);
@@ -1149,11 +1141,32 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _processNightResults() {
-    // ĐIỀU CHỈNH: Các Ma Sói hoạt động độc lập - Thu thập tất cả mục tiêu bị cắn
-    final wolfTargetIds = players
-        .where((p) => p.isAlive && p.role.team == RoleTeam.werewolf && p.votedForId != null)
-        .map((p) => p.votedForId!)
-        .toSet();
+    // TÍNH TOÁN MỤC TIÊU CỦA SÓI: Chỉ giết 1 người duy nhất có số phiếu cao nhất
+    Map<int, int> biteVotes = {};
+    for (var p in players.where((p) => p.isAlive && p.role.team == RoleTeam.werewolf)) {
+      if (p.votedForId != null && p.votedForId != -1) {
+        // CHỈ TÍNH VOTE NẾU MỤC TIÊU KHÔNG PHẢI LÀ SÓI
+        try {
+          final target = players.firstWhere((pl) => pl.id == p.votedForId);
+          if (target.role.team != RoleTeam.werewolf) {
+            int weight = (p.role.id == 'soi_dau_dan') ? 2 : 1;
+            biteVotes[p.votedForId!] = (biteVotes[p.votedForId!] ?? 0) + weight;
+          }
+        } catch (_) {}
+      }
+    }
+
+    int? finalWolfTargetId;
+    if (biteVotes.isNotEmpty) {
+      int maxVotes = 0;
+      for (var v in biteVotes.values) {
+        if (v > maxVotes) maxVotes = v;
+      }
+      List<int> tiedTargets = biteVotes.entries.where((e) => e.value == maxVotes).map((e) => e.key).toList();
+      
+      // Xử lý hòa: Chọn ngẫu nhiên 1 người trong số những người bị vote nhiều nhất
+      finalWolfTargetId = tiedTargets[Random().nextInt(tiedTargets.length)];
+    }
 
     // Xử lý Phù Thủy hồi sinh trước
     if (witchReviveTargetId != null) {
@@ -1163,8 +1176,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // Sau đó mới tính toán cái chết
-    for (int targetId in wolfTargetIds) {
-      final victim = players.firstWhere((p) => p.id == targetId);
+    if (finalWolfTargetId != null) {
+      final victim = players.firstWhere((p) => p.id == finalWolfTargetId);
       if (!victim.isProtected && victim.id != witchReviveTargetId) {
         killPlayer(victim, langSvc.t('night_casualty').replaceFirst('%s', victim.name));
       }
@@ -1414,6 +1427,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (!isCanceling && p.id == target.id) {
         p.voteCount += weight;
       }
+      // Cập nhật trạng thái local để UI thay đổi ngay lập tức
       if (p.name == userName) {
         p.votedForId = _myNightBiteTargetId;
       }
@@ -1452,13 +1466,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void _updateWerewolfLeadingTarget() {
     OnlinePlayer? leader;
     int maxV = 0;
+    bool isTie = false;
     for (var p in players) {
       if (p.voteCount > maxV) {
         maxV = p.voteCount;
         leader = p;
+        isTie = false;
+      } else if (p.voteCount == maxV && maxV > 0) {
+        isTie = true;
       }
     }
-    werewolfTarget = leader;
+    // Đồng bộ với server: Nếu huề phiếu thì không có mục tiêu dẫn đầu (hiển thị đồng đều)
+    werewolfTarget = isTie ? null : leader;
   }
 
   void executeCupidLink() {

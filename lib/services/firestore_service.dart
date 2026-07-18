@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
@@ -203,50 +204,82 @@ class FirestoreService {
         };
 
         if (currentPhase == 'night') {
-          // ĐIỀU CHỈNH: Các Ma Sói hoạt động độc lập - Tất cả mục tiêu bị Sói chọn đều chết
-          List<int> wolfTargets = [];
+          // 1. TỔNG HỢP PHIẾU BẦU CỦA SÓI
+          Map<int, int> biteVotes = {};
           for (var p in players) {
-            if (p['votedForId'] != null && p['votedForId'] != -1) {
-              // Kiểm tra xem người vote có phải là Sói không
-              final voterRole = p['roleId'] ?? '';
-              if (voterRole == 'soi' || voterRole == 'soi_nguyen' || voterRole == 'soi_dau_dan') {
-                wolfTargets.add(p['votedForId']);
+            final voterRole = p['roleId'] ?? '';
+            final isWolf = voterRole == 'soi' || voterRole == 'soi_nguyen' || voterRole == 'soi_dau_dan';
+            
+            if (isWolf && p['votedForId'] != null && p['votedForId'] != -1) {
+              final targetId = p['votedForId'];
+              // Kiểm tra mục tiêu có phải là Sói không (Bảo vệ đồng đội)
+              final target = players.firstWhere((pl) => pl['id'] == targetId, orElse: () => null);
+              if (target != null) {
+                final targetRole = target['roleId'] ?? '';
+                final isTargetWolf = targetRole == 'soi' || targetRole == 'soi_nguyen' || targetRole == 'soi_dau_dan';
+                if (!isTargetWolf) {
+                  int weight = (voterRole == 'soi_dau_dan') ? 2 : 1;
+                  biteVotes[targetId] = (biteVotes[targetId] ?? 0) + weight;
+                }
               }
             }
           }
 
+          // 2. CHỌN DUY NHẤT 1 NẠN NHÂN CỦA SÓI
+          int? finalWolfTargetId;
+          if (biteVotes.isNotEmpty) {
+            int maxVotes = 0;
+            biteVotes.forEach((_, v) { if (v > maxVotes) maxVotes = v; });
+            
+            List<int> tiedTargets = [];
+            biteVotes.forEach((id, v) { if (v == maxVotes) tiedTargets.add(id); });
+            
+            // Xử lý hòa: Chọn ngẫu nhiên 1 người
+            finalWolfTargetId = tiedTargets[Random().nextInt(tiedTargets.length)];
+          }
+
           int? reviveId = data['witchReviveTargetId'];
-          List<int> killedThisNight = [];
+          bool wolfKillSuccess = false;
 
           for (var p in players) {
-            bool isTargetedByWolf = wolfTargets.contains(p['id']);
+            bool isTargetedByWolf = (finalWolfTargetId != null && p['id'] == finalWolfTargetId);
             bool isSavedByWitch = (p['id'] == reviveId && reviveId != null);
 
-            // 1. Xử lý Sói cắn (Nhiều mục tiêu độc lập)
-            if (isTargetedByWolf) {
-              if (p['isProtected'] != true && !isSavedByWitch) {
+            // Xử lý cái chết của Sói (Chỉ thực hiện cho 1 người duy nhất)
+            if (isTargetedByWolf && !wolfKillSuccess) {
+              if (p['isAlive'] == true && p['isProtected'] != true && !isSavedByWitch) {
                 p['isAlive'] = false;
-                killedThisNight.add(p['id']);
-                messages.add({'senderName': 'system', 'content': 'night_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
+                wolfKillSuccess = true;
+                messages.add({
+                  'senderName': 'system', 
+                  'content': 'night_casualty', 
+                  'targetName': p['name'], 
+                  'isSystem': true, 
+                  'time': Timestamp.now()
+                });
               }
             }
             
-            // 2. Cập nhật trạng thái Phù Thủy cứu (Hồi sinh)
+            // Phù Thủy cứu
             if (isSavedByWitch) {
               p['isAlive'] = true; 
               p['isProtected'] = true;
               p['wasHealedByWitch'] = true;
             }
 
-            // 3. Kiểm tra Phù Thủy độc
-            if (p['isPoisoned'] == true) {
+            // Phù Thủy độc
+            if (p['isPoisoned'] == true && p['isAlive'] == true) {
               p['isAlive'] = false;
-              if (!killedThisNight.contains(p['id'])) {
-                messages.add({'senderName': 'system', 'content': 'poison_casualty', 'targetName': p['name'], 'isSystem': true, 'time': Timestamp.now()});
-              }
+              messages.add({
+                'senderName': 'system', 
+                'content': 'poison_casualty', 
+                'targetName': p['name'], 
+                'isSystem': true, 
+                'time': Timestamp.now()
+              });
             }
             
-            // Reset các trạng thái tạm thời cho ngày mới
+            // Reset trạng thái đêm
             p['isProtected'] = false;
             p['isPoisoned'] = false;
             p['voteCount'] = 0;
