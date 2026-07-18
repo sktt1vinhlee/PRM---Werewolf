@@ -363,11 +363,18 @@ class FirestoreService {
           updates['cursedPlayerId'] = null; // Reset lời nguyền khi trời sáng
           updates['xathuHasShotToday'] = false;
         }
+        
+        updates['players'] = players;
+
+        // TỐI ƯU: Đưa toàn bộ tin nhắn hệ thống vào updates để ghi đè 1 lần duy nhất, tránh duplicates
+        List currentMessages = List.from(data['messages'] ?? []);
+        currentMessages.addAll(messages);
+        if (currentMessages.length > 50) {
+          currentMessages = currentMessages.sublist(currentMessages.length - 50);
+        }
+        updates['messages'] = currentMessages;
 
         transaction.update(roomRef, updates);
-        if (messages.isNotEmpty) {
-          transaction.update(roomRef, {'messages': FieldValue.arrayUnion(messages)});
-        }
 
         // --- KIỂM TRA THẮNG CUỘC TRÊN SERVER ---
         // Nếu Nerd đã thắng (status ended), không kiểm tra các điều kiện thắng khác

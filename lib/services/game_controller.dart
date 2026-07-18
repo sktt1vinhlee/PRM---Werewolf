@@ -214,7 +214,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         }
 
         lobbyPlayerNames = playersData.map((p) => p['name'] as String).toList();
-        playerCount = data['playerCount'] ?? playerCount;
+        // Giới hạn số lượng người chơi tối đa là 15
+        playerCount = (data['playerCount'] ?? playerCount).clamp(4, 15);
         dayNumber = data['dayNumber'] ?? dayNumber;
         phaseNumber = serverPhaseNumber;
         cursedPlayerId = data['cursedPlayerId'];
@@ -317,9 +318,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
                 if (players[i].name.trim() == userName.trim()) {
                   myPlayer = players[i];
-                  // CHỈ ĐỒNG BỘ NGƯỢC NẾU SERVER ĐÃ KHỚP HOẶC QUÁ 3 GIÂY (Tránh nhảy số)
+                  // 3. CHỈ ĐỒNG BỘ NGƯỢC NẾU SERVER ĐÃ KHỚP HOẶC QUÁ 3 GIÂY (Tránh nhảy số)
+                  // THÊM: Nếu local intent là null (mới chuyển phase), chấp nhận ngay dữ liệu server
                   bool hasSynced = serverMyVotedForId == localMyVotedForId;
-                  if (_lastVoteTime == null || now.difference(_lastVoteTime!).inSeconds > 3 || hasSynced) {
+                  if (localMyVotedForId == null || _lastVoteTime == null || now.difference(_lastVoteTime!).inSeconds > 3 || hasSynced) {
                     if (currentPhase == GamePhase.night) {
                       _myNightBiteTargetId = serverMyVotedForId;
                     } else {
@@ -548,6 +550,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     // vì Server (Firestore Transaction) đã làm điều đó và cập nhật vào danh sách players.
 
     currentPhase = newPhase;
+    // RESET LOCAL INTENT KHI CHUYỂN PHASE ĐỂ TRÁNH VOTE ẢO
+    _myNightBiteTargetId = null;
+    _myCurrentVoteTargetId = null;
+    _lastVoteTime = null;
 
     if (newPhase == GamePhase.day) {
       if (roomCode.isEmpty) {
@@ -843,8 +849,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (_activeMatchmakingToken == sessionToken && currentState == PlayState.matchmaking) {
         debugPrint('Matchmaking: No active rooms found, creating new lobby...');
         generateRoomCode();
-        // Cho phép tối đa 18 người thay vì cứng 15
-        playerCount = 18;
+        // Giới hạn tối đa 15 người
+        playerCount = 15;
         isRoomLocked = false;
         await createRoom();
         _activeMatchmakingToken = null;
@@ -907,8 +913,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void updatePlayerCount(int count) {
-    playerCount = count;
+    // Giới hạn cứng tối đa 15 người
+    final int safeCount = count.clamp(4, 15);
+    playerCount = safeCount;
     notifyListeners();
+    // Đồng bộ số lượng người chơi tối đa lên Firestore để những người đang join thấy được
+    if (roomCode.isNotEmpty && (_currentHostName == userName || myPlayer?.isHost == true)) {
+      firestoreSvc.updateRoomData(roomCode, {'playerCount': safeCount});
+    }
   }
 
   void selectPlayer(OnlinePlayer? player) {

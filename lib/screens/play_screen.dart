@@ -478,10 +478,10 @@ class _PlayScreenState extends State<PlayScreen> {
               ]
           ),
           Slider(
-              value: _controller.playerCount.toDouble(),
-              min: 4, // Thay đổi min thành 4
-              max: 18,
-              divisions: 14, // 18 - 4 = 14
+              value: _controller.playerCount.toDouble().clamp(4, 15),
+              min: 4, 
+              max: 15,
+              divisions: 11, // 15 - 4 = 11
               activeColor: Colors.white,
               inactiveColor: Colors.white30,
               onChanged: isHost ? (v) => _controller.updatePlayerCount(v.toInt()) : null
@@ -978,7 +978,10 @@ class _PlayScreenState extends State<PlayScreen> {
       return const SizedBox.shrink();
     }
 
-    final showVotes = _controller.currentPhase != GamePhase.night || my.role.team == RoleTeam.werewolf;
+    // Chỉ hiện số vote vào ban đêm (cho Sói) hoặc khi đang ở giai đoạn Bỏ phiếu (Voting)
+    final isVotingPhase = _controller.currentPhase == GamePhase.voting;
+    final isWerewolfNight = _controller.currentPhase == GamePhase.night && my.role.team == RoleTeam.werewolf;
+    final showVotes = isVotingPhase || isWerewolfNight;
 
     return Positioned(
       top: 6,
