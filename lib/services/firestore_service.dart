@@ -17,24 +17,32 @@ class FirestoreService {
         'isPublic': isPublic,
         'createdAt': FieldValue.serverTimestamp(),
         'phaseNumber': 0,
-        'players': [
-          {
+        'players': {
+          'p1': {
+            'id': 1,
             'name': hostName,
             'isHost': true,
             'isReady': true,
+            'isAlive': true,
+            'voteCount': 0,
+            'votedForId': null,
           }
-        ],
-        'messages': [
-          {
-            'senderName': 'system',
-            'content': 'lobby_created',
-            'isSystem': true,
-            'isWerewolfOnly': false,
-            'isGhost': false,
-            'time': Timestamp.now(),
-          }
-        ],
+        },
+        'presence': {
+          hostName: FieldValue.serverTimestamp(),
+        },
       });
+      
+      // Tạo tin nhắn khởi tạo trong subcollection
+      await _db.collection('rooms').doc(roomCode).collection('messages').add({
+        'senderName': 'system',
+        'content': 'lobby_created',
+        'isSystem': true,
+        'isWerewolfOnly': false,
+        'isGhost': false,
+        'time': FieldValue.serverTimestamp(),
+      });
+      
       debugPrint('Room $roomCode created successfully');
     } catch (e) {
       debugPrint('Error creating room: $e');
@@ -42,9 +50,11 @@ class FirestoreService {
     }
   }
 
-  /// Xóa phòng ngay lập tức
+  /// Xóa phòng
   Future<void> deleteRoom(String roomCode) async {
     try {
+      // Lưu ý: Firebase không tự xóa subcollection khi xóa document cha. 
+      // Nhưng với quy mô này, ta có thể tạm chấp nhận hoặc dùng cloud function sau.
       await _db.collection('rooms').doc(roomCode).delete();
       debugPrint('Room $roomCode deleted');
     } catch (e) {
@@ -52,37 +62,38 @@ class FirestoreService {
     }
   }
 
-  /// Tham gia vào phòng đã có
+  /// Tham gia phòng
   Future<void> joinRoom(String roomCode, String userName) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      final roomRef = _db.collection('rooms').doc(roomCode);
-
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) {
-          throw Exception('Room not found');
-        }
+        if (!snapshot.exists) throw Exception('Room not found');
 
-        final data = snapshot.data();
-        List players = List.from(data?['players'] ?? []);
-        int limit = data?['playerCount'] ?? 15;
+        final data = snapshot.data()!;
+        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+        int limit = data['playerCount'] ?? 15;
 
-        if (players.length >= limit) {
-          throw Exception('Room is full');
-        }
+        if (players.length >= limit) throw Exception('Room is full');
+        
+        bool exists = players.values.any((p) => p['name'] == userName);
+        if (exists) throw Exception('username_already_exists');
 
-        bool exists = players.any((p) => p['name'] == userName);
-        if (exists) {
-          throw Exception('username_already_exists');
-        }
-        players.add({
-          'name': userName,
-          'isHost': false,
-          'isReady': false,
-        });
+        int nextId = players.length + 1;
+        String playerKey = 'p$nextId';
+
         transaction.update(roomRef, {
-          'players': players,
-          'currentPlayersCount': players.length,
+          'players.$playerKey': {
+            'id': nextId,
+            'name': userName,
+            'isHost': false,
+            'isReady': false,
+            'isAlive': true,
+            'voteCount': 0,
+            'votedForId': null,
+          },
+          'currentPlayersCount': players.length + 1,
+          'presence.$userName': FieldValue.serverTimestamp(),
         });
       });
     } catch (e) {
@@ -91,41 +102,43 @@ class FirestoreService {
     }
   }
 
-  /// Thoát khỏi phòng
+  /// Thoát phòng
   Future<void> leaveRoom(String roomCode, String userName) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      final roomRef = _db.collection('rooms').doc(roomCode);
-
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
+        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+        
+        String? targetKey;
+        players.forEach((key, value) {
+          if (value['name'] == userName) targetKey = key;
+        });
 
-        int index = players.indexWhere((p) => p['name'] == userName);
-        if (index == -1) return;
+        if (targetKey == null) return;
 
-        bool wasHost = players[index]['isHost'] == true;
-        players.removeAt(index);
+        bool wasHost = players[targetKey]['isHost'] == true;
+        players.remove(targetKey);
 
         if (players.isEmpty) {
           transaction.delete(roomRef);
         } else {
+          Map<String, dynamic> updates = {
+            'players': players, // Ghi đè lại map sau khi xóa
+            'currentPlayersCount': players.length,
+            'presence.$userName': FieldValue.delete(),
+          };
+
           if (wasHost) {
-            players[0]['isHost'] = true;
-            players[0]['isReady'] = true;
-            transaction.update(roomRef, {
-              'players': players,
-              'currentPlayersCount': players.length,
-              'hostName': players[0]['name'],
-            });
-          } else {
-            transaction.update(roomRef, {
-              'players': players,
-              'currentPlayersCount': players.length,
-            });
+            String firstKey = players.keys.first;
+            updates['players.$firstKey.isHost'] = true;
+            updates['players.$firstKey.isReady'] = true;
+            updates['hostName'] = players[firstKey]['name'];
           }
+          transaction.update(roomRef, updates);
         }
       });
     } catch (e) {
@@ -133,7 +146,17 @@ class FirestoreService {
     }
   }
 
-  /// Lắng nghe thay đổi của phòng
+  /// Heartbeat tối ưu
+  Future<void> updateLastSeen(String roomCode, String playerName) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'presence.$playerName': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      // Bỏ qua lỗi heartbeat
+    }
+  }
+
   Stream<DocumentSnapshot<Map<String, dynamic>>> getRoomStream(String roomCode) {
     return _db.collection('rooms').doc(roomCode).snapshots();
   }
@@ -148,30 +171,49 @@ class FirestoreService {
     }
   }
 
-  /// Bắt đầu game
-  Future<void> startGame(String roomCode, List<Map<String, dynamic>> playersWithRoles) async {
+  Stream<QuerySnapshot<Map<String, dynamic>>> getMessagesStream(String roomCode) {
+    return _db.collection('rooms')
+        .doc(roomCode)
+        .collection('messages')
+        .orderBy('time', descending: true)
+        .limit(50)
+        .snapshots();
+  }
+
+  Future<void> sendChatMessage(String roomCode, Map<String, dynamic> messageData) async {
     try {
+      // Đảm bảo dùng server timestamp để đồng bộ
+      messageData['time'] = FieldValue.serverTimestamp();
+      await _db.collection('rooms').doc(roomCode).collection('messages').add(messageData);
+    } catch (e) {
+      debugPrint('Error sending message: $e');
+    }
+  }
+
+  Future<void> startGame(String roomCode, List<Map<String, dynamic>> playersList) async {
+    try {
+      Map<String, dynamic> playersMap = {};
+      for (var p in playersList) {
+        playersMap['p${p['id']}'] = p;
+      }
+
       await _db.collection('rooms').doc(roomCode).update({
         'status': 'playing',
-        'players': playersWithRoles,
+        'players': playersMap,
         'startedAt': FieldValue.serverTimestamp(),
         'currentPhase': 'night',
         'phaseNumber': 1,
         'dayNumber': 1,
-        'xathuRevealed': false,
-        'xathuBullets': 2,
-        'xathuHasShotToday': false,
-        'cursedPlayerId': null,
         'winner': null,
-        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 20))), // Đồng bộ với durationNight=20
-        'messages': FieldValue.arrayUnion([
-          {
-            'senderName': 'system',
-            'content': 'match_started',
-            'isSystem': true,
-            'time': Timestamp.now(),
-          }
-        ]),
+        'phaseEndTime': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 20))),
+      });
+      
+      await sendChatMessage(roomCode, {
+        'senderName': 'system',
+        'content': 'match_started',
+        'isSystem': true,
+        'isWerewolfOnly': false,
+        'isGhost': false,
       });
     } catch (e) {
       debugPrint('Error starting game: $e');
@@ -179,10 +221,18 @@ class FirestoreService {
     }
   }
 
-  /// CHUYỂN PHASE AN TOÀN VÀ TÍNH TOÁN KẾT QUẢ
+  /// Cập nhật dữ liệu phòng (Dùng update thông thường thay vì transaction khi không cần đọc)
+  Future<void> updateRoomData(String roomCode, Map<String, dynamic> data) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update(data);
+    } catch (e) {
+      debugPrint('Error updating room data: $e');
+    }
+  }
+
+  /// CHUYỂN PHASE AN TOÀN - TỐI ƯU
   Future<void> secureNextPhase(String roomCode, int expectedPhaseNumber, String nextPhase, int durationSeconds) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
-
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
@@ -192,9 +242,10 @@ class FirestoreService {
         int currentPN = data['phaseNumber'] ?? 0;
         if (currentPN != expectedPhaseNumber) return;
 
-        List players = List.from(data['players'] ?? []);
-        List messages = [];
+        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+        List<Map<String, dynamic>> messagesToAdd = [];
         String currentPhase = data['currentPhase'] ?? 'night';
+        
         Map<String, dynamic> updates = {
           'currentPhase': nextPhase,
           'phaseNumber': currentPN + 1,
@@ -204,203 +255,127 @@ class FirestoreService {
         };
 
         if (currentPhase == 'night') {
-          // 1. TỔNG HỢP PHIẾU BẦU CỦA SÓI
+          // XỬ LÝ KẾT QUẢ ĐÊM
           Map<int, int> biteVotes = {};
-          for (var p in players) {
+          players.forEach((key, p) {
             final voterRole = p['roleId'] ?? '';
             final isWolf = voterRole == 'soi' || voterRole == 'soi_nguyen' || voterRole == 'soi_dau_dan';
-            
             if (isWolf && p['votedForId'] != null && p['votedForId'] != -1) {
-              final targetId = p['votedForId'];
-              // Kiểm tra mục tiêu có phải là Sói không (Bảo vệ đồng đội)
-              final target = players.firstWhere((pl) => pl['id'] == targetId, orElse: () => null);
-              if (target != null) {
-                final targetRole = target['roleId'] ?? '';
-                final isTargetWolf = targetRole == 'soi' || targetRole == 'soi_nguyen' || targetRole == 'soi_dau_dan';
-                if (!isTargetWolf) {
-                  int weight = (voterRole == 'soi_dau_dan') ? 2 : 1;
-                  biteVotes[targetId] = (biteVotes[targetId] ?? 0) + weight;
-                }
-              }
+              int targetId = p['votedForId'];
+              int weight = (voterRole == 'soi_dau_dan') ? 2 : 1;
+              biteVotes[targetId] = (biteVotes[targetId] ?? 0) + weight;
             }
-          }
+          });
 
-          // 2. CHỌN DUY NHẤT 1 NẠN NHÂN CỦA SÓI
           int? finalWolfTargetId;
           if (biteVotes.isNotEmpty) {
-            int maxVotes = 0;
-            biteVotes.forEach((_, v) { if (v > maxVotes) maxVotes = v; });
-            
-            List<int> tiedTargets = [];
-            biteVotes.forEach((id, v) { if (v == maxVotes) tiedTargets.add(id); });
-            
-            // Xử lý hòa: Chọn ngẫu nhiên 1 người
-            finalWolfTargetId = tiedTargets[Random().nextInt(tiedTargets.length)];
+            int maxV = biteVotes.values.reduce(max);
+            List<int> tied = biteVotes.entries.where((e) => e.value == maxV).map((e) => e.key).toList();
+            finalWolfTargetId = tied[Random().nextInt(tied.length)];
           }
 
           int? reviveId = data['witchReviveTargetId'];
           bool wolfKillSuccess = false;
 
-          for (var p in players) {
+          players.forEach((key, p) {
             bool isTargetedByWolf = (finalWolfTargetId != null && p['id'] == finalWolfTargetId);
             bool isSavedByWitch = (p['id'] == reviveId && reviveId != null);
 
-            // Xử lý cái chết của Sói (Chỉ thực hiện cho 1 người duy nhất)
             if (isTargetedByWolf && !wolfKillSuccess) {
               if (p['isAlive'] == true && p['isProtected'] != true && !isSavedByWitch) {
                 p['isAlive'] = false;
                 wolfKillSuccess = true;
-                messages.add({
-                  'senderName': 'system', 
-                  'content': 'night_casualty', 
-                  'targetName': p['name'], 
-                  'isSystem': true, 
-                  'time': Timestamp.now()
-                });
+                messagesToAdd.add({'senderName': 'system', 'content': 'night_casualty', 'targetName': p['name'], 'isSystem': true});
               }
             }
-            
-            // Phù Thủy cứu
             if (isSavedByWitch) {
-              p['isAlive'] = true; 
+              p['isAlive'] = true;
               p['isProtected'] = true;
-              p['wasHealedByWitch'] = true;
             }
-
-            // Phù Thủy độc
             if (p['isPoisoned'] == true && p['isAlive'] == true) {
               p['isAlive'] = false;
-              messages.add({
-                'senderName': 'system', 
-                'content': 'poison_casualty', 
-                'targetName': p['name'], 
-                'isSystem': true, 
-                'time': Timestamp.now()
-              });
+              messagesToAdd.add({'senderName': 'system', 'content': 'poison_casualty', 'targetName': p['name'], 'isSystem': true});
             }
             
-            // Reset trạng thái đêm
+            // Reset
             p['isProtected'] = false;
             p['isPoisoned'] = false;
             p['voteCount'] = 0;
             p['votedForId'] = null;
-            p['wasProtectedByBodyguard'] = false;
-            p['wasHealedByWitch'] = false;
-          }
-        }
-        else if (currentPhase == 'voting') {
-          // TÍNH TOÁN NGƯỜI BỊ TREO CỔ
+          });
+        } else if (currentPhase == 'voting') {
+          // XỬ LÝ TREO CỔ
           int maxVotes = 0;
-          dynamic hangedPlayer;
+          String? hangedKey;
           bool isTie = false;
 
-          for (var p in players) {
+          players.forEach((key, p) {
             int v = p['voteCount'] ?? 0;
             if (v > maxVotes) {
               maxVotes = v;
-              hangedPlayer = p;
+              hangedKey = key;
               isTie = false;
             } else if (v == maxVotes && v > 0) {
               isTie = true;
             }
-          }
+          });
 
-          // Chỉ treo cổ nếu có người bị vote nhiều nhất và không bị huề phiếu (và phải > 1 phiếu)
-          if (hangedPlayer != null && maxVotes > 1 && !isTie) {
-            hangedPlayer['isAlive'] = false;
-            messages.add({'senderName': 'system', 'content': 'lynched', 'targetName': hangedPlayer['name'], 'isSystem': true, 'time': Timestamp.now()});
-            if (hangedPlayer['roleId'] == 'nerd') {
+          if (hangedKey != null && maxVotes > 1 && !isTie) {
+            players[hangedKey!]['isAlive'] = false;
+            messagesToAdd.add({'senderName': 'system', 'content': 'lynched', 'targetName': players[hangedKey!]['name'], 'isSystem': true});
+            if (players[hangedKey!]['roleId'] == 'nerd') {
               updates['status'] = 'ended';
               updates['winner'] = 'nerd';
             }
           } else {
-            messages.add({'senderName': 'system', 'content': 'no_lynch', 'isSystem': true, 'time': Timestamp.now()});
+            messagesToAdd.add({'senderName': 'system', 'content': 'no_lynch', 'isSystem': true});
           }
-          for (var p in players) {
+          players.forEach((key, p) {
             p['voteCount'] = 0;
-            p['votedForId'] = null; // QUAN TRỌNG: Reset dấu vết vote của từng người
-          }
+            p['votedForId'] = null;
+          });
         }
 
         if (nextPhase == 'day') {
-          messages.add({'senderName': 'system', 'content': 'sunrise', 'isSystem': true, 'time': Timestamp.now()});
-        } else if (nextPhase == 'voting') {
-          messages.add({'senderName': 'system', 'content': 'voting_start', 'isSystem': true, 'time': Timestamp.now()});
+          messagesToAdd.add({'senderName': 'system', 'content': 'sunrise', 'isSystem': true});
+          updates['cursedPlayerId'] = null;
+          updates['xathuHasShotToday'] = false;
         } else if (nextPhase == 'night') {
-          messages.add({'senderName': 'system', 'content': 'night_start', 'isSystem': true, 'time': Timestamp.now()});
+          messagesToAdd.add({'senderName': 'system', 'content': 'night_start', 'isSystem': true});
+          updates['dayNumber'] = (data['dayNumber'] ?? 1) + 1;
+        } else if (nextPhase == 'voting') {
+          messagesToAdd.add({'senderName': 'system', 'content': 'voting_start', 'isSystem': true});
         }
 
-        updates['players'] = players;
-
-        // --- KIỂM TRA TỬ NẠN CÙNG NHAU (LOVER LINK) ---
+        // Kiểm tra Lover tragedy
         final int? l1Id = data['lover1Id'];
         final int? l2Id = data['lover2Id'];
         if (l1Id != null && l2Id != null) {
-          bool l1Dead = players.any((p) => p['id'] == l1Id && p['isAlive'] == false);
-          bool l2Dead = players.any((p) => p['id'] == l2Id && p['isAlive'] == false);
-
-          if (l1Dead || l2Dead) {
-            for (var p in players) {
+          bool dead = players.values.any((p) => (p['id'] == l1Id || p['id'] == l2Id) && p['isAlive'] == false);
+          if (dead) {
+            players.forEach((key, p) {
               if ((p['id'] == l1Id || p['id'] == l2Id) && p['isAlive'] == true) {
                 p['isAlive'] = false;
-                messages.add({
-                  'senderName': 'system',
-                  'content': 'lover_tragedy',
-                  'targetName': p['name'],
-                  'isSystem': true,
-                  'time': Timestamp.now()
-                });
+                messagesToAdd.add({'senderName': 'system', 'content': 'lover_tragedy', 'targetName': p['name'], 'isSystem': true});
               }
-            }
+            });
           }
         }
 
-        if (nextPhase == 'night') {
-          updates['dayNumber'] = (data['dayNumber'] ?? 1) + 1;
-        }
-
-        if (nextPhase == 'day') {
-          updates['cursedPlayerId'] = null; // Reset lời nguyền khi trời sáng
-          updates['xathuHasShotToday'] = false;
-        }
-        
         updates['players'] = players;
-
-        // TỐI ƯU: Đưa toàn bộ tin nhắn hệ thống vào updates để ghi đè 1 lần duy nhất, tránh duplicates
-        List currentMessages = List.from(data['messages'] ?? []);
-        currentMessages.addAll(messages);
-        if (currentMessages.length > 50) {
-          currentMessages = currentMessages.sublist(currentMessages.length - 50);
-        }
-        updates['messages'] = currentMessages;
-
         transaction.update(roomRef, updates);
 
-        // --- KIỂM TRA THẮNG CUỘC TRÊN SERVER ---
-        // Nếu Nerd đã thắng (status ended), không kiểm tra các điều kiện thắng khác
+        // Gửi tin nhắn hệ thống
+        for (var msg in messagesToAdd) {
+          msg['time'] = FieldValue.serverTimestamp();
+          transaction.set(roomRef.collection('messages').doc(), msg);
+        }
+
+        // KIỂM TRA THẮNG CUỘC
         if (updates['status'] == 'ended') return;
 
-        // KIỂM TRA TÌNH NHÂN CÒN SỐNG: Nếu 2 tình nhân còn sống, chưa phân định thắng thua đội ngay
-        final int? lover1Id = data['lover1Id'];
-        final int? lover2Id = data['lover2Id'];
-        bool bothLoversAlive = false;
-        if (lover1Id != null && lover2Id != null) {
-          bool l1Alive = players.any((p) => p['id'] == lover1Id && p['isAlive'] == true);
-          bool l2Alive = players.any((p) => p['id'] == lover2Id && p['isAlive'] == true);
-          bothLoversAlive = l1Alive && l2Alive;
-        }
-
-        int wolves = players.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
-        int others = players.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
-        int totalAlive = wolves + others;
-
-        if (bothLoversAlive) {
-          // Phe Tình Nhân thắng khi chỉ còn họ (hoặc thêm Cupid) sống sót
-          if (totalAlive == 2 || (totalAlive == 3 && players.any((p) => p['isAlive'] == true && p['roleId'] == 'cupid'))) {
-            transaction.update(roomRef, {'status': 'ended', 'winner': 'lovers'});
-          }
-          return; // Tạm dừng các điều kiện thắng Phe Dân/Sói nếu Tình Nhân còn sống
-        }
+        int wolves = players.values.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+        int others = players.values.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
 
         if (wolves == 0) {
           transaction.update(roomRef, {'status': 'ended', 'winner': 'villagers'});
@@ -413,8 +388,8 @@ class FirestoreService {
     }
   }
 
-  /// Xử lý Vote an toàn bằng Transaction
-  Future<void> submitVoteTransaction(String roomCode, String voterName, int newTargetId, int weight) async {
+  /// Vote an toàn dùng Dot Notation (Cực kỳ tối ưu, ít xung đột)
+  Future<void> submitVoteTransaction(String roomCode, String voterName, int? newTargetId) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
       await _db.runTransaction((transaction) async {
@@ -422,122 +397,47 @@ class FirestoreService {
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
+        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+        
+        String? voterKey;
+        players.forEach((key, value) { if (value['name'] == voterName) voterKey = key; });
+        if (voterKey == null) return;
 
-        int voterIndex = players.indexWhere((p) => p['name'] == voterName);
-        if (voterIndex == -1) return;
-
-        // ĐIỀU CHỈNH ONLINE: Ban ngày mọi phiếu bầu đều có trọng số là 1 (theo yêu cầu)
-        // Bất kể client gửi weight bao nhiêu, server sẽ dùng 1.
-        const int actualWeight = 1;
-
-        int? oldTargetId = players[voterIndex]['votedForId'];
+        int? oldTargetId = players[voterKey!]['votedForId'];
         if (oldTargetId == newTargetId) return;
 
-        bool changed = false;
-
-        if (oldTargetId != null && oldTargetId != -1) {
-          int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
-          if (oldTargetIdx != -1) {
-            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - actualWeight;
-            if (players[oldTargetIdx]['voteCount'] < 0) players[oldTargetIdx]['voteCount'] = 0;
-            changed = true;
+        Map<String, dynamic> updates = {};
+        
+        // Trừ vote cũ
+        if (oldTargetId != null) {
+          String? oldKey;
+          players.forEach((k, v) { if (v['id'] == oldTargetId) oldKey = k; });
+          if (oldKey != null) {
+            int current = players[oldKey]['voteCount'] ?? 0;
+            updates['players.$oldKey.voteCount'] = max(0, current - 1);
           }
         }
 
-        if (newTargetId != -1) {
-          int newTargetIdx = players.indexWhere((p) => p['id'] == newTargetId);
-          if (newTargetIdx != -1) {
-            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + actualWeight;
-            changed = true;
+        // Cộng vote mới
+        if (newTargetId != null && newTargetId != -1) {
+          String? newKey;
+          players.forEach((k, v) { if (v['id'] == newTargetId) newKey = k; });
+          if (newKey != null) {
+            int current = players[newKey]['voteCount'] ?? 0;
+            updates['players.$newKey.voteCount'] = current + 1;
           }
         }
 
-        players[voterIndex]['votedForId'] = newTargetId;
-        changed = true;
-
-        if (changed) {
-          transaction.update(roomRef, {'players': players});
-        }
+        updates['players.$voterKey.votedForId'] = newTargetId == -1 ? null : newTargetId;
+        transaction.update(roomRef, updates);
       });
     } catch (e) {
       debugPrint('Error in submitVoteTransaction: $e');
     }
   }
 
-  /// Để tương thích với code cũ nếu chưa cập nhật hết
-  Future<void> nextPhase(String roomCode, String phase, int durationSeconds) async {
-    try {
-      final endTime = DateTime.now().add(Duration(seconds: durationSeconds));
-      await _db.collection('rooms').doc(roomCode).update({
-        'currentPhase': phase,
-        'phaseEndTime': Timestamp.fromDate(endTime),
-      });
-    } catch (e) {
-      debugPrint('Error updating phase: $e');
-    }
-  }
-
-  /// Gửi tin nhắn chat vào phòng
-  Future<void> sendChatMessage(String roomCode, Map<String, dynamic> messageData) async {
-    try {
-      await _db.collection('rooms').doc(roomCode).update({
-        'messages': FieldValue.arrayUnion([messageData]),
-      });
-    } catch (e) {
-      debugPrint('Error sending message: $e');
-    }
-  }
-
-  /// Cập nhật dữ liệu phòng
-  Future<void> updateRoomData(String roomCode, Map<String, dynamic> data) async {
-    try {
-      await _db.collection('rooms').doc(roomCode).update(data);
-    } catch (e) {
-      debugPrint('Error updating room data: $e');
-    }
-  }
-
-  /// Tìm phòng ghép trận Online - Ưu tiên phòng đông người nhất để nhanh đủ người
-  Future<String?> findPublicRoom() async {
-    try {
-      final snapshot = await _db
-          .collection('rooms')
-          .where('isPublic', isEqualTo: true)
-          .where('status', isEqualTo: 'waiting')
-          .limit(20)
-          .get();
-
-      if (snapshot.docs.isEmpty) return null;
-
-      final docs = snapshot.docs.toList();
-      docs.sort((a, b) {
-        final data = a.data();
-        final dataB = b.data();
-        int countA = data['currentPlayersCount'] ?? 0;
-        int countB = dataB['currentPlayersCount'] ?? 0;
-        if (countA != countB) return countB.compareTo(countA);
-        Timestamp? timeA = data['createdAt'];
-        Timestamp? timeB = dataB['createdAt'];
-        if (timeA != null && timeB != null) return timeA.compareTo(timeB);
-        return 0;
-      });
-
-      for (var doc in docs) {
-        final data = doc.data();
-        int current = data['currentPlayersCount'] ?? 0;
-        int limit = data['playerCount'] ?? 15;
-        if (current < limit) return doc.id;
-      }
-    } catch (e) {
-      debugPrint('Error finding public room: $e');
-      rethrow;
-    }
-    return null;
-  }
-
-  /// Cập nhật 1 hoặc nhiều thuộc tính của người chơi bằng Transaction
-  Future<void> updatePlayerField(String roomCode, int targetPlayerId, Map<String, dynamic> fields) async {
+  /// Sói cắn an toàn dùng Dot Notation
+  Future<void> submitBiteTransaction(String roomCode, String voterName, int? newTargetId) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
       await _db.runTransaction((transaction) async {
@@ -545,112 +445,142 @@ class FirestoreService {
         if (!snapshot.exists) return;
 
         final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
+        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+        
+        String? voterKey;
+        players.forEach((key, value) { if (value['name'] == voterName) voterKey = key; });
+        if (voterKey == null) return;
 
-        for (var p in players) {
-          if (p['id'] == targetPlayerId) {
-            fields.forEach((key, value) => p[key] = value);
-            break;
+        final int weight = players[voterKey!]['roleId'] == 'soi_dau_dan' ? 2 : 1;
+        int? oldTargetId = players[voterKey!]['votedForId'];
+        if (oldTargetId == newTargetId) return;
+
+        Map<String, dynamic> updates = {};
+
+        if (oldTargetId != null) {
+          String? oldKey;
+          players.forEach((k, v) { if (v['id'] == oldTargetId) oldKey = k; });
+          if (oldKey != null) {
+            int current = players[oldKey]['voteCount'] ?? 0;
+            updates['players.$oldKey.voteCount'] = max(0, current - weight);
           }
         }
-        transaction.update(roomRef, {'players': players});
+
+        if (newTargetId != null && newTargetId != -1) {
+          String? newKey;
+          players.forEach((k, v) { if (v['id'] == newTargetId) newKey = k; });
+          if (newKey != null) {
+            int current = players[newKey]['voteCount'] ?? 0;
+            updates['players.$newKey.voteCount'] = current + weight;
+          }
+        }
+
+        updates['players.$voterKey.votedForId'] = newTargetId == -1 ? null : newTargetId;
+        transaction.update(roomRef, updates);
       });
     } catch (e) {
-      debugPrint('Error in updatePlayerField: $e');
+      debugPrint('Error in submitBiteTransaction: $e');
     }
   }
 
-  /// Cập nhật thuộc tính trên NHIỀU người chơi cùng lúc (dùng cho reset phase)
   Future<void> updateMultiplePlayerFields(String roomCode, Map<int, Map<String, dynamic>> updates) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      await _db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
-
-        final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
-
-        for (var p in players) {
-          final id = p['id'] as int?;
-          if (id != null && updates.containsKey(id)) {
-            updates[id]!.forEach((key, value) => p[key] = value);
-          }
+      final snapshot = await roomRef.get();
+      if (!snapshot.exists) return;
+      Map<String, dynamic> players = Map<String, dynamic>.from(snapshot.data()!['players'] ?? {});
+      
+      Map<String, dynamic> finalUpdates = {};
+      updates.forEach((id, fields) {
+        String? targetKey;
+        players.forEach((k, v) { if (v['id'] == id) targetKey = k; });
+        if (targetKey != null) {
+          fields.forEach((key, value) => finalUpdates['players.$targetKey.$key'] = value);
         }
-        transaction.update(roomRef, {'players': players});
       });
+      if (finalUpdates.isNotEmpty) await roomRef.update(finalUpdates);
     } catch (e) {
       debugPrint('Error in updateMultiplePlayerFields: $e');
     }
   }
 
-  /// Heartbeat: cập nhật lastSeen của người chơi để phát hiện Zombie Players
-  Future<void> updateLastSeen(String roomCode, String playerName) async {
-    final roomRef = _db.collection('rooms').doc(roomCode);
-    try {
-      await _db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
-
-        final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
-
-        for (var p in players) {
-          if (p['name'] == playerName) {
-            p['lastSeen'] = Timestamp.now();
-            break;
-          }
-        }
-        transaction.update(roomRef, {'players': players});
-      });
-    } catch (e) {
-      debugPrint('Error in updateLastSeen: $e');
-    }
-  }
-
-  /// Set hunterSkillActive flag trên Firebase để chờ Thợ Săn bắn
-  Future<void> setHunterSkillActive(String roomCode, bool active, {int? hunterPlayerId}) async {
-    try {
-      await _db.collection('rooms').doc(roomCode).update({
-        'hunterSkillActive': active,
-        'hunterPlayerId': hunterPlayerId,
-        'hunterSkillSetAt': active ? Timestamp.now() : null,
-      });
-    } catch (e) {
-      debugPrint('Error in setHunterSkillActive: $e');
-    }
-  }
-
-  /// Phù Thủy sử dụng bình cứu
   Future<void> useWitchHeal(String roomCode, int targetId) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
-
-        final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
-
-        for (var p in players) {
-          if (p['id'] == targetId) {
-            p['isAlive'] = true;
-            p['isProtected'] = true;
-            p['wasHealedByWitch'] = true;
-            break;
-          }
+        Map<String, dynamic> players = Map<String, dynamic>.from(snapshot.data()!['players'] ?? {});
+        String? targetKey;
+        players.forEach((k, v) { if (v['id'] == targetId) targetKey = k; });
+        
+        if (targetKey != null) {
+          transaction.update(roomRef, {
+            'players.$targetKey.isAlive': true,
+            'players.$targetKey.isProtected': true,
+            'witchReviveTargetId': targetId,
+          });
         }
-        transaction.update(roomRef, {
-          'players': players,
-          'witchReviveTargetId': targetId,
-        });
       });
     } catch (e) {
       debugPrint('Error in useWitchHeal: $e');
     }
   }
 
-  /// Thực hiện hành động tiêu diệt (Xạ Thủ, Thợ Săn, Phù Thủy độc) trong 1 Transaction duy nhất để đạt tốc độ cao nhất
+  Future<void> setHunterSkillActive(String roomCode, bool active, {int? hunterPlayerId}) async {
+    try {
+      await _db.collection('rooms').doc(roomCode).update({
+        'hunterSkillActive': active,
+        'hunterPlayerId': hunterPlayerId,
+        'hunterSkillSetAt': active ? FieldValue.serverTimestamp() : null,
+      });
+    } catch (e) {
+      debugPrint('Error in setHunterSkillActive: $e');
+    }
+  }
+
+  Future<String?> findPublicRoom() async {
+    try {
+      final snapshot = await _db.collection('rooms')
+          .where('isPublic', isEqualTo: true)
+          .where('status', isEqualTo: 'waiting')
+          .limit(10)
+          .get();
+      
+      if (snapshot.docs.isEmpty) return null;
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        if ((data['currentPlayersCount'] ?? 0) < (data['playerCount'] ?? 15)) {
+          return doc.id;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error finding public room: $e');
+    }
+    return null;
+  }
+  
+  Future<void> updatePlayerField(String roomCode, int targetPlayerId, Map<String, dynamic> fields) async {
+    final roomRef = _db.collection('rooms').doc(roomCode);
+    try {
+      final snapshot = await roomRef.get();
+      if (!snapshot.exists) return;
+      
+      Map<String, dynamic> players = Map<String, dynamic>.from(snapshot.data()!['players'] ?? {});
+      String? targetKey;
+      players.forEach((k, v) { if (v['id'] == targetPlayerId) targetKey = k; });
+      
+      if (targetKey != null) {
+        Map<String, dynamic> updates = {};
+        fields.forEach((key, value) => updates['players.$targetKey.$key'] = value);
+        await roomRef.update(updates);
+      }
+    } catch (e) {
+      debugPrint('Error in updatePlayerField: $e');
+    }
+  }
+
   Future<void> executeKillAction({
     required String roomCode,
     required int targetId,
@@ -663,99 +593,24 @@ class FirestoreService {
         final snapshot = await transaction.get(roomRef);
         if (!snapshot.exists) return;
 
-        final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
-        List messages = List.from(data['messages'] ?? []);
+        Map<String, dynamic> players = Map<String, dynamic>.from(snapshot.data()!['players'] ?? {});
+        String? targetKey;
+        players.forEach((k, v) { if (v['id'] == targetId) targetKey = k; });
 
-        // 1. Cập nhật trạng thái người chơi
-        for (var p in players) {
-          if (p['id'] == targetId) {
-            p['isAlive'] = false;
-            break;
-          }
-        }
-
-        // 2. Gộp các cập nhật của phòng
-        Map<String, dynamic> finalUpdates = {
-          'players': players,
-        };
-        if (roomUpdates != null) {
-          finalUpdates.addAll(roomUpdates);
-        }
-
-        // 3. Thêm tin nhắn hệ thống nếu có
-        if (systemMessage != null) {
-          messages.add(systemMessage);
-          finalUpdates['messages'] = messages;
+        Map<String, dynamic> finalUpdates = roomUpdates ?? {};
+        if (targetKey != null) {
+          finalUpdates['players.$targetKey.isAlive'] = false;
         }
 
         transaction.update(roomRef, finalUpdates);
-      }, maxAttempts: 2); // Giảm maxAttempts để phản hồi nhanh hoặc lỗi sớm
+        
+        if (systemMessage != null) {
+          systemMessage['time'] = FieldValue.serverTimestamp();
+          transaction.set(roomRef.collection('messages').doc(), systemMessage);
+        }
+      });
     } catch (e) {
       debugPrint('Error in executeKillAction: $e');
-    }
-  }
-
-  /// Xử lý Bite của Sói (Gộp vote và werewolfTargetId)
-  Future<void> submitBiteTransaction(String roomCode, String voterName, int newTargetId, int weight) async {
-    final roomRef = _db.collection('rooms').doc(roomCode);
-    try {
-      await _db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
-
-        final data = snapshot.data()!;
-        List players = List.from(data['players'] ?? []);
-
-        int voterIndex = players.indexWhere((p) => p['name'] == voterName);
-        if (voterIndex == -1) return;
-
-        // ĐIỀU CHỈNH ONLINE: Server tự xác định trọng số dựa trên vai trò thực tế
-        final int actualWeight = players[voterIndex]['roleId'] == 'soi_dau_dan' ? 2 : 1;
-        debugPrint('Transaction: $voterName (role: ${players[voterIndex]['roleId']}) votes $newTargetId with weight $actualWeight');
-
-        int? oldTargetId = players[voterIndex]['votedForId'];
-        if (oldTargetId == newTargetId) return;
-
-        if (oldTargetId != null && oldTargetId != -1) {
-          int oldTargetIdx = players.indexWhere((p) => p['id'] == oldTargetId);
-          if (oldTargetIdx != -1) {
-            players[oldTargetIdx]['voteCount'] = (players[oldTargetIdx]['voteCount'] ?? 0) - actualWeight;
-            if (players[oldTargetIdx]['voteCount'] < 0) players[oldTargetIdx]['voteCount'] = 0;
-          }
-        }
-
-        if (newTargetId != -1) {
-          int newTargetIdx = players.indexWhere((p) => p['id'] == newTargetId);
-          if (newTargetIdx != -1) {
-            players[newTargetIdx]['voteCount'] = (players[newTargetIdx]['voteCount'] ?? 0) + actualWeight;
-          }
-        }
-
-        players[voterIndex]['votedForId'] = newTargetId;
-
-        // Tính toán lại werewolfTargetId ngay trong Transaction với luật Đồng thuận (Consensus)
-        int maxV = 0;
-        int? leadingTargetId;
-        bool isTie = false;
-        for (var p in players) {
-          int v = p['voteCount'] ?? 0;
-          if (v > maxV) {
-            maxV = v;
-            leadingTargetId = p['id'];
-            isTie = false;
-          } else if (v == maxV && v > 0) {
-            isTie = true;
-          }
-        }
-
-        transaction.update(roomRef, {
-          'players': players,
-          'werewolfTargetId': isTie ? null : leadingTargetId,
-        });
-      }, maxAttempts: 2);
-    } catch (e) {
-      debugPrint('Error in submitBiteTransaction: $e');
     }
   }
 }

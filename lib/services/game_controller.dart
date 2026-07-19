@@ -42,7 +42,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _zombieTimer;          // Quét và kick/kill zombie
   Timer? _hunterTimeoutTimer;   // Timeout cho kỹ năng Thợ Săn
   Timer? _endGameTimer;         // Hẹn giờ xóa phòng khi kết thúc game
+  Timer? _voteDebounceTimer;    // Debounce cho vote
+  Timer? _biteDebounceTimer;    // Debounce cho sói cắn
   StreamSubscription? _roomSubscription;
+  StreamSubscription? _messagesSubscription;
   Timestamp? _lastSyncedEndTime;
   int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
   int? _myNightBiteTargetId; // ID mục tiêu bị cắn của sói
@@ -196,6 +199,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void listenToRoom(String code) {
     _roomSubscription?.cancel();
+    _messagesSubscription?.cancel();
+    
     _roomSubscription = firestoreSvc.getRoomStream(code).listen((snapshot) {
       if (!snapshot.exists) {
         _handleRoomDeleted();
@@ -204,8 +209,20 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
       final data = snapshot.data();
       if (data != null) {
-        final List playersData = data['players'] ?? [];
-        final List messagesData = data['messages'] ?? [];
+        // ĐỒNG BỘ PRESENCE (Heartbeat)
+        if (data['presence'] != null) {
+          final Map<String, dynamic> presenceMap = data['presence'];
+          presenceMap.forEach((pName, timestamp) {
+            if (timestamp is Timestamp) {
+              _localLastSeenMap[pName] = timestamp.toDate();
+            }
+          });
+        }
+
+        final Map<String, dynamic> playersMapData = Map<String, dynamic>.from(data['players'] ?? {});
+        // Chuyển Map thành List sorted by ID để đồng nhất UI
+        final List playersData = playersMapData.values.toList()..sort((a, b) => (a['id'] ?? 0).compareTo(b['id'] ?? 0));
+        
         final int serverPhaseNumber = data['phaseNumber'] ?? 0;
         
         String? winnerFromServer;
@@ -354,33 +371,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
 
-        chatMessages = messagesData.map((m) => ChatMessage(
-          senderName: m['senderName'],
-          content: m['content'],
-          targetName: m['targetName'],
-          isSystem: m['isSystem'] ?? false,
-          isWerewolfOnly: m['isWerewolfOnly'] ?? false,
-          isGhost: m['isGhost'] ?? false,
-          time: (m['time'] as Timestamp).toDate(),
-        )).where((m) {
-          // Tin nhắn hệ thống: Ai cũng thấy
-          if (m.isSystem) return true;
-
-          // Tin nhắn Phe Sói: Chỉ những người phe Sói mới thấy (kể cả Sói đã chết nếu muốn, hoặc chỉ Sói sống)
-          // Ở đây cho phép cả Sói sống và Sói chết xem kênh Sói, nhưng người phe khác thì không.
-          if (m.isWerewolfOnly) {
-            return myPlayer?.role.team == RoleTeam.werewolf;
-          }
-
-          // Tin nhắn Hồn ma: Chỉ những người đã chết mới thấy
-          if (m.isGhost) {
-            return myPlayer != null && !myPlayer!.isAlive;
-          }
-
-          // Tin nhắn công khai: Ai cũng thấy
-          return true;
-        }).toList();
-
         if (data['status'] == 'playing' && currentState == PlayState.lobby) {
           _handleGameStarted(playersData);
         }
@@ -394,37 +384,52 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       }
     });
+
+    // LẮNG NGHE TIN NHẮN TỪ SUBCOLLECTION
+    _messagesSubscription = firestoreSvc.getMessagesStream(code).listen((snapshot) {
+      chatMessages = snapshot.docs.map((doc) {
+        final m = doc.data();
+        return ChatMessage(
+          senderName: m['senderName'] ?? '',
+          content: m['content'] ?? '',
+          targetName: m['targetName'],
+          isSystem: m['isSystem'] ?? false,
+          isWerewolfOnly: m['isWerewolfOnly'] ?? false,
+          isGhost: m['isGhost'] ?? false,
+          time: (m['time'] as Timestamp?)?.toDate() ?? DateTime.now(),
+        );
+      }).where((m) {
+        if (m.isSystem) return true;
+        if (m.isWerewolfOnly) return myPlayer?.role.team == RoleTeam.werewolf;
+        if (m.isGhost) return myPlayer != null && !myPlayer!.isAlive;
+        return true;
+      }).toList().reversed.toList(); // Đảo ngược vì descending: true
+      notifyListeners();
+    });
   }
 
   void _handleGameEnd(String winner) {
     currentState = PlayState.ended;
-    if (winner == 'nerd') {
-      winnerMessage = '${langSvc.t('role_nerd')} thắng!';
-    } else if (winner == 'werewolves') {
-      winnerMessage = 'Ma Sói thắng!';
-    } else if (winner == 'villagers') {
-      winnerMessage = 'Dân Làng thắng!';
-    } else if (winner == 'lovers') {
-      winnerMessage = 'Phe Tình Nhân thắng! ❤️';
-    }
+    winnerMessage = winner == 'nerd' ? '${langSvc.t('role_nerd')} thắng!' :
+                   winner == 'werewolves' ? 'Ma Sói thắng!' :
+                   winner == 'villagers' ? 'Dân Làng thắng!' : 'Phe Tình Nhân thắng! ❤️';
+
     _phaseTimer?.cancel();
 
-    // TỰ ĐỘNG XÓA PHÒNG & THOÁT (10 giây để người chơi xem kết quả)
     if (roomCode.isNotEmpty) {
       final bool isHost = _currentHostName == userName || myPlayer?.isHost == true;
       final codeToDelete = roomCode;
-      debugPrint('Game ended. Host status: $isHost. Room $codeToDelete will be deleted in 10s.');
 
       _endGameTimer?.cancel();
       _endGameTimer = Timer(const Duration(seconds: 10), () {
         if (isHost) {
-          debugPrint('Timer fired: Host is deleting room $codeToDelete');
-          firestoreSvc.deleteRoom(codeToDelete).catchError((e) => debugPrint('Auto-delete room error: $e'));
+          firestoreSvc.deleteRoom(codeToDelete);
         }
-        // Tất cả người chơi tự reset state để về Main Menu (nếu chưa thoát thủ công)
         if (roomCode == codeToDelete || roomCode.isEmpty) {
           _roomSubscription?.cancel();
+          _messagesSubscription?.cancel();
           _roomSubscription = null;
+          _messagesSubscription = null;
           roomCode = '';
           currentState = PlayState.setup;
           notifyListeners();
@@ -436,24 +441,25 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleRoomDeleted() {
     _roomSubscription?.cancel();
+    _messagesSubscription?.cancel();
     _roomSubscription = null;
+    _messagesSubscription = null;
     roomCode = '';
     currentState = PlayState.setup;
     notifyListeners();
   }
 
   void _handleGameStarted(List playersData) {
-    players = playersData.asMap().entries.map((entry) {
-      final i = entry.key;
-      final p = entry.value;
+    players = playersData.map((p) {
       final roleId = p['roleId'] ?? 'dan';
       final role = roleDefinitions.firstWhere((r) => r.id == roleId, orElse: () => roleDefinitions[0]);
 
       final player = OnlinePlayer(
-        id: i + 1,
+        id: p['id'] ?? 0,
         name: p['name'],
         role: role,
         isHost: p['isHost'] ?? false,
+        isAlive: p['isAlive'] ?? true,
       );
 
       if (p['name'] == userName) {
@@ -511,11 +517,20 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _triggerNextPhaseOnFirestore() {
-    // Cho phép bất kỳ máy nào cũng có thể kích hoạt chuyển phase khi hết giờ.
-    // Transaction 'secureNextPhase' sẽ đảm bảo chỉ có người đầu tiên thành công
-    // dựa trên việc so khớp phaseNumber. Điều này giúp phòng game không bị kẹt
-    // nếu máy Host bị lag hoặc mất kết nối.
+    // TỐI ƯU: Chỉ Host được kích hoạt ngay lập tức. Các máy khác chờ 3s đề phòng Host lag.
+    final isHost = (_currentHostName == userName);
+    if (isHost) {
+      _executePhaseTransition();
+    } else {
+      Future.delayed(const Duration(seconds: 3), () {
+        if (roomCode.isNotEmpty && _isTransitioning) {
+          _executePhaseTransition();
+        }
+      });
+    }
+  }
 
+  void _executePhaseTransition() {
     String next;
     int duration;
     if (currentPhase == GamePhase.night) {
@@ -651,7 +666,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       final codeToLeave = roomCode;
 
       _roomSubscription?.cancel();
-      _heartbeatTimer?.cancel(); // Dừng heartbeat khi rời phòng
+      _messagesSubscription?.cancel();
+      _heartbeatTimer?.cancel();
       _zombieTimer?.cancel();
       _serverLastSeenMap.clear();
       _localLastSeenMap.clear();
@@ -659,11 +675,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       _heartbeatTimer = null;
       roomCode = '';
       currentState = PlayState.setup;
-      isRoomLocked = false; // Reset lock state khi rời phòng
+      isRoomLocked = false;
       notifyListeners();
 
-      // KHÔNG xóa phòng lập tức ở đây dù là Host, để Timer 10s xử lý.
-      // Chỉ thực hiện leaveRoom để server cập nhật danh sách người chơi.
       firestoreSvc.leaveRoom(codeToLeave, userName).catchError((e) => debugPrint(e.toString()));
     }
   }
@@ -679,10 +693,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Bắt đầu gửi heartbeat định kỳ (mỗi 15 giây) lên Firebase
+  /// Bắt đầu gửi heartbeat định kỳ (tối ưu 60 giây) lên Firebase
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _updateActivity();
     });
     // Gửi ngay lần đầu
@@ -699,7 +713,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   /// Khởi chạy cơ chế phát hiện và xử lý Zombie (mất kết nối)
   void _startZombieDetection() {
     _zombieTimer?.cancel();
-    _zombieTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _zombieTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (roomCode.isEmpty) return;
 
       final now = DateTime.now();
@@ -710,9 +724,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         for (var pName in lobbyPlayerNames) {
           if (pName == userName) continue;
           final lastSeen = _localLastSeenMap[pName];
-          if (lastSeen != null && now.difference(lastSeen).inSeconds > 45) {
+          if (lastSeen != null && now.difference(lastSeen).inSeconds > 120) {
             if (currentState == PlayState.lobby) {
-              // Kick người chơi khỏi phòng nếu đang ở sảnh
               firestoreSvc.leaveRoom(roomCode, pName);
             }
           }
@@ -721,8 +734,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
         if (_currentHostName != null) {
           final hostLastSeen = _localLastSeenMap[_currentHostName!];
-          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 45) {
-            // Host đã chết -> Gọi leaveRoom để buộc server đổi Host (Host Migration)
+          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 120) {
             firestoreSvc.leaveRoom(roomCode, _currentHostName!);
           }
         }
@@ -953,29 +965,27 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void syncGameState() {
     if (roomCode.isEmpty) return;
 
-    // Đồng bộ danh sách người chơi (bao gồm trạng thái sống/chết và các hiệu ứng)
-    // Lưu ý: Trong chế độ Online, Host thường là người chịu trách nhiệm chính đồng bộ
-    // hoặc mỗi người chơi tự cập nhật hành động của mình qua các hàm execute riêng.
-    final List<Map<String, dynamic>> playersMaps = players.map((p) {
-      // Kết hợp dữ liệu role (không đổi) và dữ liệu trạng thái (thay đổi)
-      return {
+    Map<String, dynamic> playersMap = {};
+    for (var p in players) {
+      playersMap['p${p.id}'] = {
         'id': p.id,
         'name': p.name,
         'roleId': p.role.id,
         'isHost': p.isHost,
         'isAlive': p.isAlive,
         'voteCount': p.voteCount,
+        'votedForId': p.votedForId,
         'isProtected': p.isProtected,
         'isPoisoned': p.isPoisoned,
         'wasProtectedByBodyguard': p.wasProtectedByBodyguard,
         'wasHealedByWitch': p.wasHealedByWitch,
       };
-    }).toList();
+    }
 
     firestoreSvc.updateRoomData(roomCode, {
       'dayNumber': dayNumber,
       'currentPhase': currentPhase.name,
-      'players': playersMaps, // Cập nhật trực tiếp vào mảng players chính
+      'players': playersMap,
       'werewolfTargetId': werewolfTarget?.id,
       'witchReviveTargetId': witchReviveTargetId,
     });
@@ -1276,32 +1286,32 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   void executeVote(OnlinePlayer target) {
     if (!target.isAlive) return;
-    // BAN NGÀY: Mọi người đều có trọng số vote là 1
     const weight = 1;
     final bool isCanceling = _myCurrentVoteTargetId == target.id;
     final oldTargetId = _myCurrentVoteTargetId;
     
-    // Cập nhật local state trước để đạt độ trễ 0s
     _myCurrentVoteTargetId = isCanceling ? null : target.id;
     _lastVoteTime = DateTime.now();
 
     for (var p in players) {
-      // Trừ điểm người cũ
       if (oldTargetId != null && p.id == oldTargetId) {
         p.voteCount = (p.voteCount - weight).clamp(0, 999);
       }
-      // Cộng điểm người mới (nếu không phải đang hủy)
       if (!isCanceling && p.id == target.id) {
         p.voteCount += weight;
       }
-      // Cập nhật trạng thái người vote
       if (p.name == userName) {
         p.votedForId = _myCurrentVoteTargetId;
       }
     }
 
     if (roomCode.isNotEmpty) {
-      firestoreSvc.submitVoteTransaction(roomCode, userName, _myCurrentVoteTargetId ?? -1, weight);
+      _voteDebounceTimer?.cancel();
+      _voteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+        if (roomCode.isNotEmpty) {
+          firestoreSvc.submitVoteTransaction(roomCode, userName, _myCurrentVoteTargetId);
+        }
+      });
     }
     _updateActivity();
     notifyListeners();
@@ -1428,7 +1438,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final bool isCanceling = _myNightBiteTargetId == target.id;
     final oldBiteId = _myNightBiteTargetId;
     
-    // Cập nhật local state trước
     _myNightBiteTargetId = isCanceling ? null : target.id;
     _lastVoteTime = DateTime.now();
 
@@ -1439,7 +1448,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (!isCanceling && p.id == target.id) {
         p.voteCount += weight;
       }
-      // Cập nhật trạng thái local để UI thay đổi ngay lập tức
       if (p.name == userName) {
         p.votedForId = _myNightBiteTargetId;
       }
@@ -1448,7 +1456,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     _updateWerewolfLeadingTarget();
 
     if (roomCode.isNotEmpty) {
-      firestoreSvc.submitBiteTransaction(roomCode, userName, _myNightBiteTargetId ?? -1, weight);
+      _biteDebounceTimer?.cancel();
+      _biteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+        if (roomCode.isNotEmpty) {
+          firestoreSvc.submitBiteTransaction(roomCode, userName, _myNightBiteTargetId);
+        }
+      });
     }
     _updateActivity();
     notifyListeners();
@@ -1463,13 +1476,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     for (var p in players) {
       if (p.id == oldBiteId) p.voteCount = (p.voteCount - weight).clamp(0, 999);
-      if (p.name == userName) p.votedForId = null; // Reset local votedForId
+      if (p.name == userName) p.votedForId = null;
     }
     _updateWerewolfLeadingTarget();
 
-    // TỐI ƯU: Gộp cả vote và update target vào 1 call duy nhất
     if (roomCode.isNotEmpty) {
-      firestoreSvc.submitBiteTransaction(roomCode, userName, -1, weight); // -1 = không ai
+      _biteDebounceTimer?.cancel();
+      _biteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+        if (roomCode.isNotEmpty) {
+          firestoreSvc.submitBiteTransaction(roomCode, userName, null);
+        }
+      });
     }
     _updateActivity();
     notifyListeners();
@@ -1868,6 +1885,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     _phaseTimer?.cancel();
     botChatTimer?.cancel();
     _roomSubscription?.cancel();
+    _messagesSubscription?.cancel();
     _heartbeatTimer?.cancel();
     _hunterTimeoutTimer?.cancel();
     _zombieTimer?.cancel();
