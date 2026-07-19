@@ -79,7 +79,12 @@ class FirestoreService {
         bool exists = players.values.any((p) => p['name'] == userName);
         if (exists) throw Exception('username_already_exists');
 
-        int nextId = players.length + 1;
+        // Tìm ID lớn nhất hiện tại để tránh trùng lặp key khi có người thoát
+        int maxId = 0;
+        players.values.forEach((p) {
+          if (p['id'] > maxId) maxId = p['id'];
+        });
+        int nextId = maxId + 1;
         String playerKey = 'p$nextId';
 
         transaction.update(roomRef, {
@@ -388,98 +393,51 @@ class FirestoreService {
     }
   }
 
-  /// Vote an toàn dùng Dot Notation (Cực kỳ tối ưu, ít xung đột)
-  Future<void> submitVoteTransaction(String roomCode, String voterName, int? newTargetId) async {
+  /// Vote siêu tốc dùng FieldValue.increment (Không dùng Transaction)
+  Future<void> submitVote(String roomCode, int voterId, int? oldTargetId, int? newTargetId) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      await _db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
+      Map<String, dynamic> updates = {};
+      
+      // Trừ vote mục tiêu cũ
+      if (oldTargetId != null && oldTargetId != -1) {
+        updates['players.p$oldTargetId.voteCount'] = FieldValue.increment(-1);
+      }
 
-        final data = snapshot.data()!;
-        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
-        
-        String? voterKey;
-        players.forEach((key, value) { if (value['name'] == voterName) voterKey = key; });
-        if (voterKey == null) return;
+      // Cộng vote mục tiêu mới
+      if (newTargetId != null && newTargetId != -1) {
+        updates['players.p$newTargetId.voteCount'] = FieldValue.increment(1);
+      }
 
-        int? oldTargetId = players[voterKey!]['votedForId'];
-        if (oldTargetId == newTargetId) return;
-
-        Map<String, dynamic> updates = {};
-        
-        // Trừ vote cũ
-        if (oldTargetId != null) {
-          String? oldKey;
-          players.forEach((k, v) { if (v['id'] == oldTargetId) oldKey = k; });
-          if (oldKey != null) {
-            int current = players[oldKey]['voteCount'] ?? 0;
-            updates['players.$oldKey.voteCount'] = max(0, current - 1);
-          }
-        }
-
-        // Cộng vote mới
-        if (newTargetId != null && newTargetId != -1) {
-          String? newKey;
-          players.forEach((k, v) { if (v['id'] == newTargetId) newKey = k; });
-          if (newKey != null) {
-            int current = players[newKey]['voteCount'] ?? 0;
-            updates['players.$newKey.voteCount'] = current + 1;
-          }
-        }
-
-        updates['players.$voterKey.votedForId'] = newTargetId == -1 ? null : newTargetId;
-        transaction.update(roomRef, updates);
-      });
+      // Cập nhật trạng thái người vote
+      updates['players.p$voterId.votedForId'] = newTargetId == -1 ? null : newTargetId;
+      
+      await roomRef.update(updates);
     } catch (e) {
-      debugPrint('Error in submitVoteTransaction: $e');
+      debugPrint('Error in submitVote: $e');
     }
   }
 
-  /// Sói cắn an toàn dùng Dot Notation
-  Future<void> submitBiteTransaction(String roomCode, String voterName, int? newTargetId) async {
+  /// Sói cắn siêu tốc dùng FieldValue.increment
+  Future<void> submitBite(String roomCode, int voterId, String roleId, int? oldTargetId, int? newTargetId) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     try {
-      await _db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(roomRef);
-        if (!snapshot.exists) return;
+      final int weight = roleId == 'soi_dau_dan' ? 2 : 1;
+      Map<String, dynamic> updates = {};
 
-        final data = snapshot.data()!;
-        Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
-        
-        String? voterKey;
-        players.forEach((key, value) { if (value['name'] == voterName) voterKey = key; });
-        if (voterKey == null) return;
+      if (oldTargetId != null && oldTargetId != -1) {
+        updates['players.p$oldTargetId.voteCount'] = FieldValue.increment(-weight);
+      }
 
-        final int weight = players[voterKey!]['roleId'] == 'soi_dau_dan' ? 2 : 1;
-        int? oldTargetId = players[voterKey!]['votedForId'];
-        if (oldTargetId == newTargetId) return;
+      if (newTargetId != null && newTargetId != -1) {
+        updates['players.p$newTargetId.voteCount'] = FieldValue.increment(weight);
+      }
 
-        Map<String, dynamic> updates = {};
-
-        if (oldTargetId != null) {
-          String? oldKey;
-          players.forEach((k, v) { if (v['id'] == oldTargetId) oldKey = k; });
-          if (oldKey != null) {
-            int current = players[oldKey]['voteCount'] ?? 0;
-            updates['players.$oldKey.voteCount'] = max(0, current - weight);
-          }
-        }
-
-        if (newTargetId != null && newTargetId != -1) {
-          String? newKey;
-          players.forEach((k, v) { if (v['id'] == newTargetId) newKey = k; });
-          if (newKey != null) {
-            int current = players[newKey]['voteCount'] ?? 0;
-            updates['players.$newKey.voteCount'] = current + weight;
-          }
-        }
-
-        updates['players.$voterKey.votedForId'] = newTargetId == -1 ? null : newTargetId;
-        transaction.update(roomRef, updates);
-      });
+      updates['players.p$voterId.votedForId'] = newTargetId == -1 ? null : newTargetId;
+      
+      await roomRef.update(updates);
     } catch (e) {
-      debugPrint('Error in submitBiteTransaction: $e');
+      debugPrint('Error in submitBite: $e');
     }
   }
 

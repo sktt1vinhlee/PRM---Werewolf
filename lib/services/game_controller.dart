@@ -49,6 +49,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Timestamp? _lastSyncedEndTime;
   int? _myCurrentVoteTargetId; // ID người bị vote hiện tại của người chơi này (chỉ ban ngày)
   int? _myNightBiteTargetId; // ID mục tiêu bị cắn của sói
+  int? _lastSyncedVoteId;    // ID đã đồng bộ cuối cùng (để tính toán increment)
+  int? _lastSyncedBiteId;    // ID sói cắn đã đồng bộ
   DateTime? _lastVoteTime; // Thời điểm vote gần nhất để tránh nhấp nháy UI (flicker)
 
   // Dữ liệu theo dõi kết nối
@@ -336,13 +338,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
                 if (players[i].name.trim() == userName.trim()) {
                   myPlayer = players[i];
                   // 3. CHỈ ĐỒNG BỘ NGƯỢC NẾU SERVER ĐÃ KHỚP HOẶC QUÁ 3 GIÂY (Tránh nhảy số)
-                  // THÊM: Nếu local intent là null (mới chuyển phase), chấp nhận ngay dữ liệu server
                   bool hasSynced = serverMyVotedForId == localMyVotedForId;
                   if (localMyVotedForId == null || _lastVoteTime == null || now.difference(_lastVoteTime!).inSeconds > 3 || hasSynced) {
                     if (currentPhase == GamePhase.night) {
                       _myNightBiteTargetId = serverMyVotedForId;
+                      _lastSyncedBiteId = serverMyVotedForId;
                     } else {
                       _myCurrentVoteTargetId = serverMyVotedForId;
+                      _lastSyncedVoteId = serverMyVotedForId;
                     }
                   }
                 }
@@ -568,6 +571,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     // RESET LOCAL INTENT KHI CHUYỂN PHASE ĐỂ TRÁNH VOTE ẢO
     _myNightBiteTargetId = null;
     _myCurrentVoteTargetId = null;
+    _lastSyncedVoteId = null;
+    _lastSyncedBiteId = null;
     _lastVoteTime = null;
 
     if (newPhase == GamePhase.day) {
@@ -1285,7 +1290,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeVote(OnlinePlayer target) {
-    if (!target.isAlive) return;
+    if (!target.isAlive || myPlayer == null) return;
     const weight = 1;
     final bool isCanceling = _myCurrentVoteTargetId == target.id;
     final oldTargetId = _myCurrentVoteTargetId;
@@ -1300,16 +1305,15 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (!isCanceling && p.id == target.id) {
         p.voteCount += weight;
       }
-      if (p.name == userName) {
-        p.votedForId = _myCurrentVoteTargetId;
-      }
+      if (p.name == userName) p.votedForId = _myCurrentVoteTargetId;
     }
 
     if (roomCode.isNotEmpty) {
       _voteDebounceTimer?.cancel();
-      _voteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-        if (roomCode.isNotEmpty) {
-          firestoreSvc.submitVoteTransaction(roomCode, userName, _myCurrentVoteTargetId);
+      _voteDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+        if (roomCode.isNotEmpty && _myCurrentVoteTargetId != _lastSyncedVoteId) {
+          firestoreSvc.submitVote(roomCode, myPlayer!.id, _lastSyncedVoteId, _myCurrentVoteTargetId);
+          _lastSyncedVoteId = _myCurrentVoteTargetId;
         }
       });
     }
@@ -1432,7 +1436,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeWerewolfBite(OnlinePlayer target) {
-    if (!target.isAlive || target.role.team == RoleTeam.werewolf) return;
+    if (!target.isAlive || target.role.team == RoleTeam.werewolf || myPlayer == null) return;
     
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
     final bool isCanceling = _myNightBiteTargetId == target.id;
@@ -1448,18 +1452,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       if (!isCanceling && p.id == target.id) {
         p.voteCount += weight;
       }
-      if (p.name == userName) {
-        p.votedForId = _myNightBiteTargetId;
-      }
+      if (p.name == userName) p.votedForId = _myNightBiteTargetId;
     }
 
     _updateWerewolfLeadingTarget();
 
     if (roomCode.isNotEmpty) {
       _biteDebounceTimer?.cancel();
-      _biteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-        if (roomCode.isNotEmpty) {
-          firestoreSvc.submitBiteTransaction(roomCode, userName, _myNightBiteTargetId);
+      _biteDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+        if (roomCode.isNotEmpty && _myNightBiteTargetId != _lastSyncedBiteId) {
+          firestoreSvc.submitBite(roomCode, myPlayer!.id, myPlayer!.role.id, _lastSyncedBiteId, _myNightBiteTargetId);
+          _lastSyncedBiteId = _myNightBiteTargetId;
         }
       });
     }
@@ -1468,7 +1471,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void cancelWerewolfBite() {
-    if (_myNightBiteTargetId == null) return;
+    if (_myNightBiteTargetId == null || myPlayer == null) return;
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
     final oldBiteId = _myNightBiteTargetId;
     _myNightBiteTargetId = null;
@@ -1482,9 +1485,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
     if (roomCode.isNotEmpty) {
       _biteDebounceTimer?.cancel();
-      _biteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-        if (roomCode.isNotEmpty) {
-          firestoreSvc.submitBiteTransaction(roomCode, userName, null);
+      _biteDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+        if (roomCode.isNotEmpty && _myNightBiteTargetId != _lastSyncedBiteId) {
+          firestoreSvc.submitBite(roomCode, myPlayer!.id, myPlayer!.role.id, _lastSyncedBiteId, null);
+          _lastSyncedBiteId = null;
         }
       });
     }
