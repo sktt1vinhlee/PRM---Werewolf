@@ -41,51 +41,44 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyA004ZSMMQgZBwpYrWJtID-GJTXL1tcC4A',
-    appId: '1:144006347482:web:286a32a4c54f3a023283e3',
-    messagingSenderId: '144006347482',
-    projectId: 'werewolf-prm-7717c',
-    authDomain: 'werewolf-prm-7717c.firebaseapp.com',
-    databaseURL: 'https://werewolf-prm-7717c-default-rtdb.asia-southeast1.firebasedatabase.app',
-    storageBucket: 'werewolf-prm-7717c.firebasestorage.app',
+    apiKey: 'AIzaSyD8l4lZoRUqvMw-84qGTXO_D5kzE9uWg2E',
+    appId: '1:801531000584:web:61ff18245cc5169dde1ebd',
+    messagingSenderId: '801531000584',
+    projectId: 'werewolf-prm-v2',
+    authDomain: 'werewolf-prm-v2.firebaseapp.com',
+    storageBucket: 'werewolf-prm-v2.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAU9qvs6DiUpzrJCAuDAFab3RMp-XaAEd0',
-    appId: '1:144006347482:android:8d64c4e090c8e77c3283e3',
-    messagingSenderId: '144006347482',
-    projectId: 'werewolf-prm-7717c',
-    databaseURL: 'https://werewolf-prm-7717c-default-rtdb.asia-southeast1.firebasedatabase.app',
-    storageBucket: 'werewolf-prm-7717c.firebasestorage.app',
+    apiKey: 'AIzaSyCWRsUTiAPmeo2cV3V0AwPRGah85QxfZc0',
+    appId: '1:801531000584:android:ce0efecab6a11da3de1ebd',
+    messagingSenderId: '801531000584',
+    projectId: 'werewolf-prm-v2',
+    storageBucket: 'werewolf-prm-v2.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBd8O83n4JGhUqCJdxOqwLZIkPeYl_6Fx0',
-    appId: '1:144006347482:ios:1477b85f6c0caed53283e3',
-    messagingSenderId: '144006347482',
-    projectId: 'werewolf-prm-7717c',
-    databaseURL: 'https://werewolf-prm-7717c-default-rtdb.asia-southeast1.firebasedatabase.app',
-    storageBucket: 'werewolf-prm-7717c.firebasestorage.app',
+    apiKey: 'AIzaSyAlZSZp1T7SFt9xQlNXaTwXpjbDpytKh_s',
+    appId: '1:801531000584:ios:e427626e84984995de1ebd',
+    messagingSenderId: '801531000584',
+    projectId: 'werewolf-prm-v2',
+    storageBucket: 'werewolf-prm-v2.firebasestorage.app',
     iosBundleId: 'com.example.werewolf',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyBd8O83n4JGhUqCJdxOqwLZIkPeYl_6Fx0',
-    appId: '1:144006347482:ios:1477b85f6c0caed53283e3',
-    messagingSenderId: '144006347482',
-    projectId: 'werewolf-prm-7717c',
-    databaseURL: 'https://werewolf-prm-7717c-default-rtdb.asia-southeast1.firebasedatabase.app',
-    storageBucket: 'werewolf-prm-7717c.firebasestorage.app',
+    apiKey: 'AIzaSyAlZSZp1T7SFt9xQlNXaTwXpjbDpytKh_s',
+    appId: '1:801531000584:ios:e427626e84984995de1ebd',
+    messagingSenderId: '801531000584',
+    projectId: 'werewolf-prm-v2',
+    storageBucket: 'werewolf-prm-v2.firebasestorage.app',
     iosBundleId: 'com.example.werewolf',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyA004ZSMMQgZBwpYrWJtID-GJTXL1tcC4A',
-    appId: '1:144006347482:web:c5d499297fd3a99d3283e3',
-    messagingSenderId: '144006347482',
-    projectId: 'werewolf-prm-7717c',
-    authDomain: 'werewolf-prm-7717c.firebaseapp.com',
-    databaseURL: 'https://werewolf-prm-7717c-default-rtdb.asia-southeast1.firebasedatabase.app',
-    storageBucket: 'werewolf-prm-7717c.firebasestorage.app',
+    apiKey: 'AIzaSyD8l4lZoRUqvMw-84qGTXO_D5kzE9uWg2E',
+    appId: '1:801531000584:web:b7fc7917bc0ec644de1ebd',
+    messagingSenderId: '801531000584',
+    projectId: 'werewolf-prm-v2',
+    authDomain: 'werewolf-prm-v2.firebaseapp.com',
+    storageBucket: 'werewolf-prm-v2.firebasestorage.app',
   );
 }

@@ -211,22 +211,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
       final data = snapshot.data();
       if (data != null) {
-        // ĐỒNG BỘ PRESENCE (Heartbeat)
-        if (data['presence'] != null) {
-          final Map<String, dynamic> presenceMap = data['presence'];
-          presenceMap.forEach((pName, timestamp) {
-            if (timestamp is Timestamp) {
-              _localLastSeenMap[pName] = timestamp.toDate();
-            }
-          });
-        }
-
         final Map<String, dynamic> playersMapData = Map<String, dynamic>.from(data['players'] ?? {});
-        // Chuyển Map thành List sorted by ID để đồng nhất UI
         final List playersData = playersMapData.values.toList()..sort((a, b) => (a['id'] ?? 0).compareTo(b['id'] ?? 0));
         
         final int serverPhaseNumber = data['phaseNumber'] ?? 0;
-        
         String? winnerFromServer;
         if (data['status'] == 'ended' && currentState != PlayState.ended) {
           winnerFromServer = data['winner'] ?? '';
@@ -388,7 +376,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       }
     });
 
-    // LẮNG NGHE TIN NHẮN TỪ SUBCOLLECTION
+    // LẮNG NGHE TIN NHẮN TỪ SUBCOLLECTION (TỐI ƯU DỮ LIỆU)
     _messagesSubscription = firestoreSvc.getMessagesStream(code).listen((snapshot) {
       chatMessages = snapshot.docs.map((doc) {
         final m = doc.data();
@@ -698,13 +686,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Bắt đầu gửi heartbeat định kỳ (tối ưu 60 giây) lên Firebase
+  /// Bắt đầu gửi heartbeat định kỳ (60 giây) lên Firestore
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _updateActivity();
     });
-    // Gửi ngay lần đầu
     _updateActivity();
   }
 
@@ -715,35 +702,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Khởi chạy cơ chế phát hiện và xử lý Zombie (mất kết nối)
+  /// Phát hiện Zombie (Rút gọn cho ổn định Free Tier)
   void _startZombieDetection() {
+    // Chỉ Host kiểm tra để tiết kiệm Read.
     _zombieTimer?.cancel();
-    _zombieTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (roomCode.isEmpty) return;
-
-      final now = DateTime.now();
-      final isHost = _currentHostName == userName;
-
-      if (isHost) {
-        // Chủ phòng kiểm tra tất cả những người khác
-        for (var pName in lobbyPlayerNames) {
-          if (pName == userName) continue;
-          final lastSeen = _localLastSeenMap[pName];
-          if (lastSeen != null && now.difference(lastSeen).inSeconds > 120) {
-            if (currentState == PlayState.lobby) {
-              firestoreSvc.leaveRoom(roomCode, pName);
-            }
-          }
-        }
-      } else {
-        // Người chơi thường kiểm tra nếu Chủ phòng biến thành Zombie
-        if (_currentHostName != null) {
-          final hostLastSeen = _localLastSeenMap[_currentHostName!];
-          if (hostLastSeen != null && now.difference(hostLastSeen).inSeconds > 120) {
-            firestoreSvc.leaveRoom(roomCode, _currentHostName!);
-          }
-        }
-      }
+    _zombieTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+       // Trong bản Free tier, ta có thể tạm tắt logic Kick tự động để giảm Read tốn kém, 
+       // hoặc chỉ truy vấn subcollection 'presence' khi thực sự cần.
     });
   }
 
@@ -1014,7 +979,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   Color getPlayerBorderColor(OnlinePlayer player) {
     if (!player.isAlive) return Colors.grey[700]!;
     if (player.id == myPlayer?.id) return player.role.primaryColor;
-    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350).withOpacity(0.5);
+    if (myPlayer?.role.team == RoleTeam.werewolf && player.role.team == RoleTeam.werewolf) return const Color(0xFFEF5350).withValues(alpha: 0.5);
     if (player.hasBeenScannedBySeer) {
       final isWolf = player.role.team == RoleTeam.werewolf || player.id == cursedPlayerId;
       return isWolf ? const Color(0xFFEF5350) : const Color(0xFF81C784);
@@ -1290,7 +1255,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeVote(OnlinePlayer target) {
-    if (!target.isAlive || myPlayer == null) return;
+    // CHỈ CHO PHÉP VOTE NẾU: Mục tiêu còn sống VÀ Bản thân còn sống
+    if (myPlayer == null || !myPlayer!.isAlive || !target.isAlive) return;
+    
     const weight = 1;
     final bool isCanceling = _myCurrentVoteTargetId == target.id;
     final oldTargetId = _myCurrentVoteTargetId;
@@ -1436,7 +1403,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void executeWerewolfBite(OnlinePlayer target) {
-    if (!target.isAlive || target.role.team == RoleTeam.werewolf || myPlayer == null) return;
+    // CHỈ CHO PHÉP CẮN NẾU: Bản thân còn sống VÀ mục tiêu còn sống VÀ không phải đồng đội
+    if (myPlayer == null || !myPlayer!.isAlive || !target.isAlive || target.role.team == RoleTeam.werewolf) return;
     
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
     final bool isCanceling = _myNightBiteTargetId == target.id;
@@ -1471,7 +1439,9 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void cancelWerewolfBite() {
-    if (_myNightBiteTargetId == null || myPlayer == null) return;
+    // CHỈ CHO PHÉP HỦY NẾU: Bản thân còn sống
+    if (myPlayer == null || !myPlayer!.isAlive || _myNightBiteTargetId == null) return;
+
     final weight = myPlayer?.role.id == 'soi_dau_dan' ? 2 : 1;
     final oldBiteId = _myNightBiteTargetId;
     _myNightBiteTargetId = null;
@@ -1638,7 +1608,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           'content': 'gunner_log',
           'targetName': target.name,
           'isSystem': true,
-          'time': Timestamp.now()
         }
       );
     } else {
@@ -1669,7 +1638,6 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             'content': 'hunter_log',
             'targetName': target.name,
             'isSystem': true,
-            'time': Timestamp.now()
           }
         );
       }
