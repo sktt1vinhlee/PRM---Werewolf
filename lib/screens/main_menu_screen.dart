@@ -343,7 +343,10 @@ class MainMenuScreen extends StatelessWidget {
         children: [
           Container(
             decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
-            child: IconButton(onPressed: () {}, icon: const Icon(Icons.card_giftcard, color: Color(0xFFFFD54F), size: 28))
+            child: IconButton(
+              onPressed: () => _showInDevelopmentMessage(context, langSvc.t('reward_ads')), 
+              icon: const Icon(Icons.card_giftcard, color: Color(0xFFFFD54F), size: 28)
+            )
           ),
           Container(
             decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
