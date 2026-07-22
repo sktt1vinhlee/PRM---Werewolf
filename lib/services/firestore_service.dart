@@ -153,6 +153,7 @@ class FirestoreService {
     for (var p in playersList) { playersMap['p${p['id']}'] = p; }
     await _db.collection('rooms').doc(roomCode).update({
       'status': 'playing',
+      'isPublic': false, // Đánh dấu không công khai khi đã bắt đầu
       'players': playersMap,
       'currentPhase': 'night',
       'phaseNumber': 1,
@@ -225,6 +226,23 @@ class FirestoreService {
             }
             p['isProtected'] = false; p['isPoisoned'] = false; p['voteCount'] = 0; p['votedForId'] = null;
           }
+
+          // Kiểm tra Tình Nhân tự sát (Ban đêm)
+          final int? l1Id = data['lover1Id'];
+          final int? l2Id = data['lover2Id'];
+          if (l1Id != null && l2Id != null) {
+            final p1 = players['p$l1Id'];
+            final p2 = players['p$l2Id'];
+            if (p1 != null && p2 != null) {
+              if (p1['isAlive'] == false && p2['isAlive'] == true) {
+                p2['isAlive'] = false;
+                logs.add({'senderName': 'system', 'content': 'lover_tragedy', 'isSystem': true});
+              } else if (p2['isAlive'] == false && p1['isAlive'] == true) {
+                p1['isAlive'] = false;
+                logs.add({'senderName': 'system', 'content': 'lover_tragedy', 'isSystem': true});
+              }
+            }
+          }
         } else if (data['currentPhase'] == 'voting') {
           // Logic Treo cổ
           int maxVotes = 0;
@@ -245,9 +263,25 @@ class FirestoreService {
           if (hangedKey != null && maxVotes > 1 && !isTie) {
             players[hangedKey!]['isAlive'] = false;
             logs.add({'senderName': 'system', 'content': 'lynched', 'targetName': players[hangedKey!]['name'], 'isSystem': true});
+
+            // Kiểm tra Tình Nhân tự sát (Bỏ phiếu)
+            final int? l1Id = data['lover1Id'];
+            final int? l2Id = data['lover2Id'];
+            final int hangedId = players[hangedKey!]['id'];
+            if (l1Id != null && l2Id != null) {
+              if (hangedId == l1Id && players['p$l2Id']?['isAlive'] == true) {
+                players['p$l2Id']['isAlive'] = false;
+                logs.add({'senderName': 'system', 'content': 'lover_tragedy', 'isSystem': true});
+              } else if (hangedId == l2Id && players['p$l1Id']?['isAlive'] == true) {
+                players['p$l1Id']['isAlive'] = false;
+                logs.add({'senderName': 'system', 'content': 'lover_tragedy', 'isSystem': true});
+              }
+            }
+
             if (players[hangedKey!]['roleId'] == 'nerd') {
               updates['status'] = 'ended';
               updates['winner'] = 'nerd';
+              updates['isPublic'] = false;
             }
           } else {
             logs.add({'senderName': 'system', 'content': 'no_lynch', 'isSystem': true});
@@ -275,12 +309,37 @@ class FirestoreService {
         }
 
         if (updates['status'] == 'ended') return;
-        int wolves = players.values.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
-        int others = players.values.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
-        if (wolves == 0) {
-          transaction.update(roomRef, {'status': 'ended', 'winner': 'villagers'});
-        } else if (wolves >= others) {
-          transaction.update(roomRef, {'status': 'ended', 'winner': 'werewolves'});
+
+        Map<String, dynamic>? l1 = players.values.firstWhere((p) => p['id'] == data['lover1Id'], orElse: () => null);
+        Map<String, dynamic>? l2 = players.values.firstWhere((p) => p['id'] == data['lover2Id'], orElse: () => null);
+        bool bothLoversAlive = l1 != null && l2 != null && l1['isAlive'] == true && l2['isAlive'] == true;
+        int aliveCount = players.values.where((p) => p['isAlive'] == true).length;
+
+        // 1. Kiểm tra Tình Nhân thắng (Chỉ còn 2 tình nhân hoặc + Cupid)
+        if (bothLoversAlive) {
+          bool cupidAlive = players.values.any((p) => p['isAlive'] == true && p['roleId'] == 'cupid');
+          if (aliveCount == 2 || (aliveCount == 3 && cupidAlive)) {
+            transaction.update(roomRef, {'status': 'ended', 'winner': 'lovers', 'isPublic': false});
+            return;
+          }
+        }
+
+        // 2. Kiểm tra phe Dân/Sói thắng (Chỉ xét khi Tình Nhân cùng phe hoặc 1 trong 2 đã chết)
+        bool loversAreThirdParty = false;
+        if (bothLoversAlive) {
+          bool l1IsWolf = l1!['roleId'] == 'soi' || l1['roleId'] == 'soi_nguyen' || l1['roleId'] == 'soi_dau_dan';
+          bool l2IsWolf = l2!['roleId'] == 'soi' || l2['roleId'] == 'soi_nguyen' || l2['roleId'] == 'soi_dau_dan';
+          if (l1IsWolf != l2IsWolf) loversAreThirdParty = true;
+        }
+
+        if (!loversAreThirdParty) {
+          int wolves = players.values.where((p) => p['isAlive'] == true && (p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+          int others = players.values.where((p) => p['isAlive'] == true && !(p['roleId'] == 'soi' || p['roleId'] == 'soi_nguyen' || p['roleId'] == 'soi_dau_dan')).length;
+          if (wolves == 0) {
+            transaction.update(roomRef, {'status': 'ended', 'winner': 'villagers', 'isPublic': false});
+          } else if (wolves >= others) {
+            transaction.update(roomRef, {'status': 'ended', 'winner': 'werewolves', 'isPublic': false});
+          }
         }
       });
     } catch (e) {
@@ -339,8 +398,37 @@ class FirestoreService {
   Future<void> executeKillAction({required String roomCode, required int targetId, Map<String, dynamic>? roomUpdates, Map<String, dynamic>? systemMessage}) async {
     final roomRef = _db.collection('rooms').doc(roomCode);
     await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(roomRef);
+      if (!snapshot.exists) return;
+      final data = snapshot.data()!;
+      Map<String, dynamic> players = Map<String, dynamic>.from(data['players'] ?? {});
+
       Map<String, dynamic> updates = roomUpdates ?? {};
       updates['players.p$targetId.isAlive'] = false;
+
+      // Kiểm tra Tình Nhân tự sát (Dành cho Xạ Thủ/Thợ Săn)
+      final int? l1Id = data['lover1Id'];
+      final int? l2Id = data['lover2Id'];
+      if (l1Id != null && l2Id != null) {
+        if (targetId == l1Id && players['p$l2Id']?['isAlive'] == true) {
+          updates['players.p$l2Id.isAlive'] = false;
+          transaction.set(roomRef.collection('messages').doc(), {
+            'senderName': 'system',
+            'content': 'lover_tragedy',
+            'isSystem': true,
+            'time': FieldValue.serverTimestamp()
+          });
+        } else if (targetId == l2Id && players['p$l1Id']?['isAlive'] == true) {
+          updates['players.p$l1Id.isAlive'] = false;
+          transaction.set(roomRef.collection('messages').doc(), {
+            'senderName': 'system',
+            'content': 'lover_tragedy',
+            'isSystem': true,
+            'time': FieldValue.serverTimestamp()
+          });
+        }
+      }
+
       transaction.update(roomRef, updates);
       if (systemMessage != null) {
         systemMessage['time'] = FieldValue.serverTimestamp();

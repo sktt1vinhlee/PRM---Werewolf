@@ -411,7 +411,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       final bool isHost = _currentHostName == userName || myPlayer?.isHost == true;
       final codeToDelete = roomCode;
 
+      // Đảm bảo phòng không còn trong danh sách công khai ngay khi kết thúc
+      if (isHost) {
+        firestoreSvc.updateRoomData(roomCode, {'isPublic': false});
+      }
+
       _endGameTimer?.cancel();
+      // Tự động xóa phòng sau 10 giây để giải phóng tài nguyên
       _endGameTimer = Timer(const Duration(seconds: 10), () {
         if (isHost) {
           firestoreSvc.deleteRoom(codeToDelete);
@@ -970,7 +976,12 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (player.hasBeenScannedBySeer && currentPhase == GamePhase.night) return true;
 
     if (lover1 != null && lover2 != null) {
+      // Tình nhân thấy nhau
       if ((myPlayer?.id == lover1!.id && player.id == lover2!.id) || (myPlayer?.id == lover2!.id && player.id == lover1!.id)) return true;
+      // Cupid thấy tình nhân
+      if (myPlayer?.role.id == 'cupid' && (player.id == lover1!.id || player.id == lover2!.id)) return true;
+      // Tình nhân thấy Cupid
+      if ((myPlayer?.id == lover1!.id || myPlayer?.id == lover2!.id) && player.role.id == 'cupid') return true;
     }
     if (xathuRevealed && player.role.id == 'xa_thu') return true;
     return false;
@@ -1716,7 +1727,13 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         _phaseTimer?.cancel();
         return winnerMessage!;
       }
-      return ''; // NẾU TÌNH NHÂN CÒN SỐNG: Chưa phân định thắng thua đội Dân/Sói
+      
+      // NẾU TÌNH NHÂN KHÁC PHE (Dân & Sói): Họ tạo thành phe thứ 3, Dân/Sói thông thường không thể thắng
+      bool lover1IsWolf = lover1!.role.team == RoleTeam.werewolf;
+      bool lover2IsWolf = lover2!.role.team == RoleTeam.werewolf;
+      if (lover1IsWolf != lover2IsWolf) {
+        return ''; 
+      }
     }
 
     int w = players.where((p) => p.isAlive && p.role.team == RoleTeam.werewolf).length;
